@@ -17,6 +17,7 @@ MiniApp 是以 MiniMax Plugin 形式承载的交互式应用。本仓库收录�
 | MiniApp | 功能 | 作者 |
 | --- | --- | --- |
 | [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 按时间、模型和会话查看本机 Token 用量，包含输入、输出和缓存用量 | [amszuidas](https://github.com/amszuidas) |
+| [Token 用量看板](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md) | 近实时查看本机 Token 用量、输出速度与缓存命中率，可按时间范围、模型和会话筛选 | [yanhy2000](https://github.com/yanhy2000) |
 
 <details>
 <summary>预览：Token 用量看板</summary>
@@ -24,6 +25,15 @@ MiniApp 是以 MiniMax Plugin 形式承载的交互式应用。本仓库收录�
 ![Token 用量看板，使用合成数据展示用量趋势](plugins/amszuidas/mcode-token-usage-board/docs/preview.png)
 
 预览使用合成数据，应用界面目前为中文。数据访问范围、统计口径和兼容性说明见作品 [README](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md)。
+
+</details>
+
+<details>
+<summary>预览：Token 用量看板（mcode-usage-monitor）</summary>
+
+![Token 用量看板，使用合成数据展示用量趋势](plugins/yanhy2000/mcode-usage-monitor/docs/preview.png)
+
+预览使用合成数据，应用界面目前为中文。数据访问范围、统计口径和兼容性说明见作品 [README](plugins/yanhy2000/mcode-usage-monitor/README.zh-CN.md)。
 
 </details>
 

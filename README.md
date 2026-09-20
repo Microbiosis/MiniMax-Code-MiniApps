@@ -17,6 +17,7 @@ Packages are organized by author under `plugins/<github-username>/<plugin-id>/`.
 | MiniApp | What it does | Author |
 | --- | --- | --- |
 | [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | Explore local Token usage by date, model, and session, including input, output, and cache usage | [amszuidas](https://github.com/amszuidas) |
+| [Token Usage Board](plugins/yanhy2000/mcode-usage-monitor/) | Watch local Token usage, output speed, and cache hit rate in near real time; filter by time range, model, and session | [yanhy2000](https://github.com/yanhy2000) |
 
 <details>
 <summary>Preview: Token Usage Board</summary>
@@ -24,6 +25,15 @@ Packages are organized by author under `plugins/<github-username>/<plugin-id>/`.
 ![Token Usage Board showing usage trends with synthetic data](plugins/amszuidas/mcode-token-usage-board/docs/preview.png)
 
 The preview uses synthetic data. The app interface is currently in Chinese. See its [README](plugins/amszuidas/mcode-token-usage-board/README.md) for data access, counting rules, and compatibility notes.
+
+</details>
+
+<details>
+<summary>Preview: Token Usage Board (mcode-usage-monitor)</summary>
+
+![Token Usage Board showing usage trends with synthetic data](plugins/yanhy2000/mcode-usage-monitor/docs/preview.png)
+
+The preview uses synthetic data. The app interface is currently in Chinese. See its [README](plugins/yanhy2000/mcode-usage-monitor/README.md) for data access, counting rules, and compatibility notes.
 
 </details>
 
