@@ -2,49 +2,92 @@
 
 [English](README.md) | 简体中文
 
-MiniMax Code 桌面端 MiniApp 官方社区仓库，分享由开发者共同创造的作品。
+**MiniMax Code 桌面端 MiniApp 官方社区仓库**。发现实用工具、有趣的小应用，也可以在这些作品的基础上制作自己的 MiniApp。
 
-每个 MiniApp 都是一个完整的 Plugin 包，按作者放在 `plugins/<github-username>/<plugin-id>/` 下。欢迎下载体验，也欢迎贡献自己的作品。
+[浏览作品](#miniapps) · [开始使用](#开始使用) · [贡献作品](CONTRIBUTING.zh-CN.md) · [反馈问题](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues)
+
+## 关于本仓库
+
+MiniApp 是以 MiniMax Plugin 形式承载的交互式应用。本仓库收录开发者贡献的完整插件包，每个作品都包含独立使用所需的文件、源码和说明。
+
+作品按作者存放在 `plugins/<github-username>/<plugin-id>/` 下。你可以下载后手动安装到 MiniMax Code，也可以参考源码开发自己的作品。
 
 ## MiniApps
 
-| MiniApp | 介绍 | 作者 |
+| MiniApp | 功能 | 作者 |
 | --- | --- | --- |
-| [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 查看本机每日 Token 用量，按时间、模型和会话筛选 | [amszuidas](https://github.com/amszuidas) |
+| [Token 用量看板](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md) | 按时间、模型和会话查看本机 Token 用量，包含输入、输出和缓存用量 | [amszuidas](https://github.com/amszuidas) |
 
-## 下载与使用
+<details>
+<summary>预览：Token 用量看板</summary>
 
-1. 点击 **Code → Download ZIP** 下载并解压仓库，或 clone 到本地。
-2. 在 `plugins/<github-username>/` 下找到想用的 MiniApp。
-3. 将最内层的**完整插件目录**复制到 MiniMax Code 当前数据目录的 `<dataDir>/plugins/` 下，保留 `.minimax-plugin` 隐藏目录。
-4. 重新启动支持 MiniApp 的 MiniMax Code，确认插件已加载并启用，再打开对应 MiniApp。具体用法见作品 README。
+![Token 用量看板，使用合成数据展示用量趋势](plugins/amszuidas/mcode-token-usage-board/docs/preview.png)
 
-例如 Token 用量看板的路径：
+预览使用合成数据，应用界面目前为中文。数据访问范围、统计口径和兼容性说明见作品 [README](plugins/amszuidas/mcode-token-usage-board/README.zh-CN.md)。
+
+</details>
+
+## 开始使用
+
+### 使用要求
+
+需要支持 MiniApp 的 MiniMax Code 桌面端版本。各作品的 README 会说明已验证的客户端版本、操作系统、所需配置和已知限制，兼容性以具体作品为准。
+
+### 1. 下载
+
+点击仓库页面的 **Code → Download ZIP** 并解压，或 clone 仓库：
+
+```sh
+git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
+```
+
+在 `plugins/<github-username>/` 下找到想用的作品，阅读其 README，了解它会访问哪些本地文件或网络服务。
+
+### 2. 安装
+
+将**完整插件目录**复制到 `<dataDir>/plugins/`，保留 `.minimax-plugin` 隐藏目录。
+
+`<dataDir>` 默认为用户主目录下的 `.minimax`，即 `~/.minimax`，因此默认安装目录为 `~/.minimax/plugins/`。如果你配置了其他数据目录，请使用实际配置的路径。
+
+以 Token 用量看板为例：
 
 ```text
 仓库中：plugins/amszuidas/mcode-token-usage-board/
-安装后：<dataDir>/plugins/mcode-token-usage-board/
+安装到：<dataDir>/plugins/mcode-token-usage-board/
 ```
 
-`<dataDir>` 是客户端当前使用的数据目录；作者目录 `amszuidas/` 只用于仓库归类，不需要复制到客户端。安装后应能找到 `<dataDir>/plugins/mcode-token-usage-board/.minimax-plugin/plugin.json`。
+安装后的插件清单应位于：
 
-本仓库采用手动安装方式，不使用客户端的 GitHub 插件导入入口。更新插件时，先关闭 MiniApp，再替换对应的完整插件目录。
+```text
+<dataDir>/plugins/mcode-token-usage-board/.minimax-plugin/plugin.json
+```
+
+作者目录（`amszuidas/`）只用于仓库归类。复制到客户端时，将插件目录直接放入 `plugins/`，不要多套一层作者目录。
+
+这些插件包采用**手动安装**方式，客户端的 GitHub 插件导入功能目前不支持这类 MiniApp 包。
+
+### 3. 打开
+
+重新启动 MiniMax Code，确认插件已被识别并启用，再按作品 README 打开 MiniApp。例如，你可以请 Agent 打开“Token 用量看板”。
+
+更新时先关闭 MiniApp 并退出客户端，再替换完整插件目录。备份放在 `plugins/` 之外，数据保留方式按作品说明处理。卸载时同样先关闭应用并退出客户端，再移除对应插件目录；单独保存的应用数据可能仍会保留。
 
 ## 贡献作品
 
-在自己的 GitHub 用户名目录下新增一个完整插件包，并附上使用说明，然后提交 Pull Request。详见 [贡献指南](CONTRIBUTING.md)。
+欢迎分享工具、游戏、可视化应用和小实验。提交作品只需：
 
-```text
-plugins/
-└── <github-username>/
-    └── <plugin-id>/
-        ├── .minimax-plugin/plugin.json
-        ├── package.json
-        ├── miniapp/
-        ├── README.md
-        └── LICENSE
-```
+1. Fork 仓库，在 `plugins/<你的-github-username>/<plugin-id>/` 下加入可直接运行的完整插件包。
+2. 附上 README、许可证和运行所需文件，说明配置方式、数据访问范围与验证情况。
+3. 在根目录的中英文 README 作品表格中增加一行，然后提交 Pull Request。
+
+作者目录使用小写 GitHub username。插件目录名必须与 `.minimax-plugin/plugin.json` 中的 `name` 一致，且**插件 ID 在整个仓库中唯一**，因为安装路径不包含作者目录。
+
+完整说明见[贡献指南](CONTRIBUTING.zh-CN.md)。
+
+## 问题与建议
+
+欢迎通过 [GitHub Issues](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues) 反馈问题、分享作品想法或提出改进建议。反馈插件问题时，请提供插件 ID 和版本、MiniMax Code 版本、操作系统、复现步骤，以及预期和实际结果。日志和截图请移除凭据及私人会话内容。
 
 ## 许可证
 
-仓库采用 [MIT License](LICENSE)，各 MiniApp 以自己目录中的许可证为准。安装前请阅读作品说明，了解它会访问哪些本地文件或网络服务。
+本仓库采用 [MIT License](LICENSE)。各 MiniApp 以其目录中附带的许可证为准。

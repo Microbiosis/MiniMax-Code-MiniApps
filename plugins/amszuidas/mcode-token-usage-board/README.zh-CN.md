@@ -12,7 +12,7 @@
 
 ## 安装与使用
 
-将本目录完整复制到 MiniMax Code 当前数据目录下：
+将本目录完整复制到 MiniMax Code 当前数据目录下。`<dataDir>` 默认为用户主目录下的 `.minimax`，即 `~/.minimax`，因此默认安装路径为 `~/.minimax/plugins/mcode-token-usage-board/`。如果你配置了其他数据目录，请使用实际配置的路径：
 
 ```text
 <dataDir>/plugins/mcode-token-usage-board/

@@ -12,7 +12,7 @@ Author: [amszuidas](https://github.com/amszuidas) · Version: `1.0.0`
 
 ## Install and use
 
-Copy this entire directory into your active MiniMax Code data directory:
+Copy this entire directory into your active MiniMax Code data directory. By default, `<dataDir>` is `.minimax` in your home folder (`~/.minimax`), so the default installation path is `~/.minimax/plugins/mcode-token-usage-board/`. If you have configured a different data directory, use that directory instead:
 
 ```text
 <dataDir>/plugins/mcode-token-usage-board/

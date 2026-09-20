@@ -1,15 +1,17 @@
-# 贡献 MiniApp
+# Contributing MiniApps
 
-欢迎分享你为 MiniMax Code 制作的小工具、游戏和其他有趣作品。
+English | [简体中文](CONTRIBUTING.zh-CN.md)
 
-1. Fork 本仓库，在 `plugins/<你的 GitHub username>/<plugin-id>/` 下放入完整插件包。用户名目录统一使用小写。
-2. 保留 `.minimax-plugin/` 隐藏目录、`package.json`、`miniapp/` 和运行所需资源。插件应能独立复制使用，不依赖仓库里的其他目录。
-3. 添加简短的 `README.md`，说明用途、安装与使用方式、已验证的客户端版本和系统，以及需要的配置、文件访问或网络请求。欢迎附上截图或 GIF。
-4. 添加你有权使用的 `LICENSE`，保留第三方代码和素材要求的署名。
-5. 在根目录 README 的作品表格中增加一行，提交 Pull Request。
+We welcome tools, games, and other interesting apps you have built for MiniMax Code.
 
-插件目录名应与 `.minimax-plugin/plugin.json` 的 `name` 一致。**插件 ID 在整个仓库中唯一**，因为安装到客户端时不保留作者目录。重名时可加上作者前缀。
+1. Fork this repository and add your complete plugin package under `plugins/<your-github-username>/<plugin-id>/`. Use a lowercase GitHub username for the author directory.
+2. Include the hidden `.minimax-plugin/` directory, `package.json`, `miniapp/`, and all required runtime assets. The plugin must work when copied on its own, without depending on other directories in this repository.
+3. Add a short English `README.md`. You may also include `README.zh-CN.md` with links between the two versions. Explain what the app does, how to install and use it, tested client versions and operating systems, required configuration, file access, and network requests. Screenshots or GIFs are welcome.
+4. Include a `LICENSE` you are entitled to use, and preserve required attribution for third-party code and assets.
+5. Add an entry to the app tables in both root READMEs and open a pull request.
 
-提交可直接运行的文件；如果需要构建，附上源码和构建说明。不要提交 `node_modules/`、密钥、真实会话记录、个人数据或运行缓存。截图和示例请使用合成数据或充分脱敏的数据。
+The plugin directory name must match `name` in `.minimax-plugin/plugin.json`. **Plugin IDs must be unique across the repository**, since the author directory is not kept during installation. If a name is already taken, consider adding an author prefix.
 
-提交前在 MiniMax Code 中手动安装、打开并检查主要功能，在 PR 中写明测试环境和结果；未验证的部分如实说明。更新已有作品时，保留插件 ID，并按改动更新版本与使用说明。
+Submit ready-to-run files. If the app requires a build step, include its source and build instructions. Do not commit `node_modules/`, credentials, real session records, personal data, or runtime caches. Use synthetic or thoroughly anonymized data in screenshots and examples.
+
+Before submitting, install the app in MiniMax Code, open it, and check its main features. Include your test environment and results in the pull request, and state any unverified behavior. When updating an existing app, keep its plugin ID and update the version and usage instructions as appropriate.

@@ -2,49 +2,92 @@
 
 English | [简体中文](README.zh-CN.md)
 
-The official community repository for MiniApps built for the MiniMax Code desktop app.
+The official community repository for **MiniApps built for the MiniMax Code desktop app**. Discover useful tools, playful experiments, and apps you can make your own.
 
-Each MiniApp is a complete Plugin package stored under `plugins/<github-username>/<plugin-id>/`. Download an app to try it out, or contribute one of your own.
+[Explore MiniApps](#miniapps) · [Get started](#getting-started) · [Contribute](CONTRIBUTING.md) · [Report an issue](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues)
+
+## About
+
+MiniApps are interactive apps packaged as MiniMax Plugins. This repository brings together complete, self-contained plugin packages contributed by developers, with source files and usage instructions alongside each app.
+
+Packages are organized by author under `plugins/<github-username>/<plugin-id>/`. You can download an app, install it manually in MiniMax Code, and use its source as a starting point for your own work.
 
 ## MiniApps
 
-| MiniApp | Description | Author |
+| MiniApp | What it does | Author |
 | --- | --- | --- |
-| [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | View daily local Token usage, filtered by date, model, and session | [amszuidas](https://github.com/amszuidas) |
+| [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | Explore local Token usage by date, model, and session, including input, output, and cache usage | [amszuidas](https://github.com/amszuidas) |
 
-## Download and install
+<details>
+<summary>Preview: Token Usage Board</summary>
 
-1. Click **Code → Download ZIP** and extract the repository, or clone it locally.
-2. Find the MiniApp you want under `plugins/<github-username>/`.
-3. Copy the **entire plugin directory** into `<dataDir>/plugins/` in your active MiniMax Code data directory. Include the hidden `.minimax-plugin` directory.
-4. Restart a version of MiniMax Code that supports MiniApps, confirm that the plugin is loaded and enabled, and open the MiniApp. See its README for usage instructions.
+![Token Usage Board showing usage trends with synthetic data](plugins/amszuidas/mcode-token-usage-board/docs/preview.png)
 
-For example, Token Usage Board uses these paths:
+The preview uses synthetic data. The app interface is currently in Chinese. See its [README](plugins/amszuidas/mcode-token-usage-board/README.md) for data access, counting rules, and compatibility notes.
 
-```text
-In this repository: plugins/amszuidas/mcode-token-usage-board/
-After installation: <dataDir>/plugins/mcode-token-usage-board/
+</details>
+
+## Getting started
+
+### Requirements
+
+Use a MiniMax Code desktop version that supports MiniApps. Check the app's README for tested client versions, operating systems, configuration, and known limitations. Compatibility is documented per app.
+
+### 1. Download
+
+Select **Code → Download ZIP** on this repository and extract the archive, or clone it:
+
+```sh
+git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
 ```
 
-`<dataDir>` is the data directory used by your running MiniMax Code instance. The author directory, `amszuidas/`, only groups contributions in this repository; do not copy that extra level into the client. After installation, the manifest should be at `<dataDir>/plugins/mcode-token-usage-board/.minimax-plugin/plugin.json`.
+Find the app you want under `plugins/<github-username>/` and read its README, including which local files or network services it accesses.
 
-Install these MiniApps manually; do not use the client's GitHub plugin import feature. To update a plugin, close the MiniApp before replacing its entire plugin directory.
+### 2. Install
 
-## Contribute
+Copy the **entire plugin directory**, including the hidden `.minimax-plugin` directory, into `<dataDir>/plugins/`.
 
-Add a complete plugin package under your GitHub username, include usage instructions, and open a pull request. See the [contribution guide (中文)](CONTRIBUTING.md) for details.
+By default, `<dataDir>` is the `.minimax` directory in your home folder (`~/.minimax`), so plugins go in `~/.minimax/plugins/`. If you have configured a different data directory, use that directory instead.
+
+For Token Usage Board:
 
 ```text
-plugins/
-└── <github-username>/
-    └── <plugin-id>/
-        ├── .minimax-plugin/plugin.json
-        ├── package.json
-        ├── miniapp/
-        ├── README.md
-        └── LICENSE
+Repository: plugins/amszuidas/mcode-token-usage-board/
+Install to: <dataDir>/plugins/mcode-token-usage-board/
 ```
+
+The installed manifest must be at:
+
+```text
+<dataDir>/plugins/mcode-token-usage-board/.minimax-plugin/plugin.json
+```
+
+The author directory (`amszuidas/`) only groups contributions in the repository. Copy the plugin directory directly into the client's `plugins/` directory, without that extra author level.
+
+These packages use **manual installation**. The client's GitHub plugin import feature does not support these MiniApp packages.
+
+### 3. Open
+
+Restart MiniMax Code, confirm that the plugin is recognized and enabled, and open the MiniApp following its README. For Token Usage Board, ask the Agent to open “Token 用量看板”.
+
+To update an app, close it and exit MiniMax Code, then replace its complete plugin directory. Keep any backup outside `plugins/` and follow the app's instructions for preserving its data. To uninstall, close the app and exit the client before removing its plugin directory; separately stored app data may remain.
+
+## Contributing
+
+Tools, games, visualizations, and small experiments are all welcome. To share a MiniApp:
+
+1. Fork the repository and add a complete, ready-to-run package under `plugins/<your-github-username>/<plugin-id>/`.
+2. Include a README, a license, and any required runtime files. Document setup, data access, and what you have tested.
+3. Add the app to the tables in both root READMEs and open a pull request.
+
+Use a lowercase GitHub username for the author directory. The plugin directory name must match `.minimax-plugin/plugin.json` → `name`, and **plugin IDs must be unique across the repository**, since the author directory is not part of the installed path.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
+
+## Questions and feedback
+
+Use [GitHub Issues](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues) to report a problem or suggest an app or improvement. For an app issue, include its ID and version, your MiniMax Code version, operating system, steps to reproduce, and the expected and actual behavior. Remove credentials and private session content from logs and screenshots.
 
 ## License
 
-This repository uses the [MIT License](LICENSE). Each MiniApp is subject to the license in its own directory. Before installing an app, read its documentation to understand which local files or network services it accesses.
+This repository is licensed under the [MIT License](LICENSE). Individual MiniApps are governed by the licenses included in their own directories.
