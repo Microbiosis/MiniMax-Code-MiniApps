@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "mcode-token-usage-board",
+  "displayName": "Token 用量看板",
+  "version": "1.0.0",
+  "description": "监控本机 MiniMax Code 每日 token 用量的 Mini App 看板，支持查看输入、输出、缓存创建、缓存读取 token，并按模型和会话筛选。",
+  "author": "amszuidas",
+  "icon": "icon.png",
+  "category": "Business",
+  "exampleQueries": [
+    "打开 Token 用量看板",
+    "看看今天 MiniMax Code 用了多少 token"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
