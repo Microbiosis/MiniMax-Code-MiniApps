@@ -8,7 +8,7 @@
 
 ## 关于本仓库
 
-MiniApp 是以 MiniMax Plugin 形式承载的交互式应用。本仓库收录开发者贡献的完整插件包，每个作品都包含独立使用所需的文件、源码和说明。
+本仓库面向开源社区开放：任何开发者都可以通过 Pull Request 贡献自己的 MiniApp 插件。MiniApp 是以 MiniMax Plugin 形式承载的交互式应用。本仓库收录开发者贡献的完整插件包，每个作品都包含独立使用所需的文件、源码和说明。
 
 作品按作者存放在 `plugins/<github-username>/<plugin-id>/` 下。你可以下载后手动安装到 MiniMax Code，也可以参考源码开发自己的作品。
 

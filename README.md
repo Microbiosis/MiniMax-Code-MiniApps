@@ -8,7 +8,7 @@ The official community repository for **MiniApps built for the MiniMax Code desk
 
 ## About
 
-MiniApps are interactive apps packaged as MiniMax Plugins. This repository brings together complete, self-contained plugin packages contributed by developers, with source files and usage instructions alongside each app.
+This repository is open to the community: anyone can contribute a MiniApp plugin by opening a pull request. MiniApps are interactive apps packaged as MiniMax Plugins. This repository brings together complete, self-contained plugin packages contributed by developers, with source files and usage instructions alongside each app.
 
 Packages are organized by author under `plugins/<github-username>/<plugin-id>/`. You can download an app, install it manually in MiniMax Code, and use its source as a starting point for your own work.
 
