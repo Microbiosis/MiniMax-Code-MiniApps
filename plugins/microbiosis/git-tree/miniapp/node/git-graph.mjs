@@ -5,9 +5,12 @@
 //   packages/ui/src/git-graph/layout.ts
 // from the upstream repository https://github.com/zai-org/ZCode (Apache-2.0).
 // Original authors: Z.ai / zai-org contributors.
-// Modifications: TypeScript → ES module JavaScript; pixel layout emits a list
-// of per-row primitives (line / curve) so the browser can render the graph as a
-// column of small SVGs, one per commit row, instead of a single large SVG.
+// Modifications: TypeScript → ES module JavaScript; default rowHeight /
+// laneGap / lanePadding / topPadding / bottomPadding reduced so the layout
+// fits a single-screen commit table on a Mini App surface (upstream uses
+// 42 / 18 / 16 / 20 / 18). Curve constants in `buildEdgePath` and every
+// algorithm detail (vertex state machine, branch colour reuse, merge-path
+// detection, lockedFirst semantics) are kept in lock-step with upstream.
 
 /**
  * @typedef {object} GraphCommit
@@ -219,15 +222,10 @@ function createGitGraphLayoutModel(commits) {
       index += 1;
     }
   }
-  const laneIndices = vertices.map((v) => v.getLaneIndex());
-  const laneByHash = new Map();
-  vertices.forEach((v, i) => laneByHash.set(v.hash, laneIndices[i]));
   return {
     vertices,
     vertexByHash,
-    laneIndices,
-    branchLines: branches.flatMap((b) => b.lines),
-    laneByHash,
+    branchLines: branches.flatMap((branch) => branch.lines),
   };
 }
 
@@ -235,7 +233,7 @@ function buildEdgePath({ fromX, fromY, toX, toY, lockedFirst }) {
   if (fromX === toX) {
     return `M ${fromX} ${fromY} L ${toX} ${toY}`;
   }
-  const curveOffset = Math.max(8, Math.abs(toY - fromY) * 0.5);
+  const curveOffset = Math.max(14, Math.abs(toY - fromY) * 0.38);
   if (lockedFirst === false) {
     return `M ${fromX} ${fromY} C ${fromX} ${toY - curveOffset}, ${toX} ${toY - curveOffset}, ${toX} ${toY}`;
   }
@@ -294,9 +292,10 @@ function pointToPixels(point, opts) {
  * ZCode-aligned wrapper around the algorithm. Returns the rich structure the
  * client needs to render the graph as a single SVG canvas: rows with x/y
  * pixel coordinates, full SVG path strings per edge, the complete set of
- * branch paths for hover highlighting, and vertical-only lane segments. This
- * replaces the per-row-primitive layout that the client used to assemble
- * N inline SVGs.
+ * branch paths for hover highlighting, and vertical-only lane segments.
+ *
+ * Equivalent to upstream `layoutGitGraph`; renamed so the existing
+ * `createGitGraphLayoutModel` export below keeps its original name.
  * @param {GraphCommit[]} commits
  * @param {LayoutOptions} [options]
  * @returns {DetailedGraphLayout}
