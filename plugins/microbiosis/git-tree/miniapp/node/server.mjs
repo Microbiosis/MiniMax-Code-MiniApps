@@ -116,6 +116,18 @@ async function findRepoRoot(start) {
  */
 
 /**
+ * Parse JSON text that may carry a UTF-8 BOM. Windows editors (notepad.exe in
+ * particular) write one by default, and `JSON.parse` rejects a leading
+ * `\uFEFF` — which used to make an explicitly configured `repos.json` fail
+ * silently and fall back to discovery with nothing surfaced to the user.
+ * @param {string} text
+ * @returns {unknown}
+ */
+function parseJsonText(text) {
+  return JSON.parse(text.replace(/^\uFEFF/, ''));
+}
+
+/**
  * Load the authored repository allowlist shipped beside the Node entry. The
  * published Host install directory sits outside the workspace, so this file is
  * the only discovery source that survives publication.
@@ -127,7 +139,7 @@ async function loadRepoConfig(pluginRoot) {
   const empty = { repos: [], scanRoots: [] };
   try {
     const raw = await readFile(join(pluginRoot, 'miniapp/node/repos.json'), 'utf8');
-    const parsed = JSON.parse(raw);
+    const parsed = parseJsonText(raw);
     const pick = (/** @type {unknown} */ value) =>
       Array.isArray(value) ? value.filter((entry) => typeof entry === 'string' && isAbsolute(resolve(entry))) : [];
     return { repos: pick(parsed?.repos), scanRoots: pick(parsed?.scanRoots) };
@@ -273,7 +285,11 @@ async function buildRegistry(pluginRoot) {
   /** @type {string[]} */
   const preferred = [];
   for (const candidate of [...config.repos, ...walkRoots]) {
-    if (candidate && (await pathExists(join(candidate, '.git')))) preferred.push(candidate);
+    // Normalize on the way in: `repos[].path` entries are `resolve()`d below,
+    // and `defaultRepo` is handed to the client verbatim. Keeping the raw
+    // `D:/foo` (forward slashes) here would make the repo dropdown fail to
+    // match its own option list and render as "nothing selected".
+    if (candidate && (await pathExists(join(candidate, '.git')))) preferred.push(resolve(candidate));
   }
   for (const candidate of preferred) add(candidate);
 
@@ -603,6 +619,11 @@ const PREF_THEMES = ['auto', 'light', 'dark'];
 /**
  * Whitelist and type-coerce an arbitrary patch so a stray or malformed
  * payload cannot poison the prefs.json on disk.
+ *
+ * The empty string is a meaningful value, not a missing one: it is how the
+ * client says "this filter was cleared". Dropping it here meant a clear
+ * silently failed to persist, and the merge below resurrected the old value
+ * on the next reload.
  * @param {unknown} input
  */
 function sanitizePrefs(input) {
@@ -618,8 +639,10 @@ function sanitizePrefs(input) {
     } else if (key === 'theme') {
       if (typeof value === 'string' && PREF_THEMES.indexOf(value) >= 0) out[key] = value;
     } else {
-      // repo / ref / q / author: bounded string
-      if (typeof value === 'string' && value.length > 0 && value.length <= 240) out[key] = value;
+      // repo / ref / q / author: bounded string. `ref` additionally accepts
+      // '' as a synonym for the default 'all' scope so a cleared ref does
+      // not get resurrected either.
+      if (typeof value === 'string' && value.length <= 240) out[key] = value === '' && key === 'ref' ? 'all' : value;
     }
   }
   return out;
@@ -872,7 +895,13 @@ async function handleGraph(context, url) {
 
   const rows = splitFields(logResult.stdout, '\t');
   const hasMore = rows.length > offset + limit;
-  const commits = rows.slice(offset, offset + limit).map((/** @type {string[]} */ fields) => ({
+  // Lay out the whole accumulated window, not just this page. The lane
+  // algorithm is stateful across rows (branch colour reuse, merge-path
+  // detection, lockedFirst), so a page laid out in isolation disagrees with
+  // the pages around it: a branch opened on page 1 keeps its lane on page 2
+  // only if page 2 is laid out with page 1's rows still in scope. `git log -n
+  // offset+limit+1` already fetched them, so this costs no extra git call.
+  const window = rows.slice(0, offset + limit).map((/** @type {string[]} */ fields) => ({
     sha: fields[0] ?? '',
     short: fields[1] ?? '',
     parents: (fields[2] ?? '').split(' ').filter(Boolean),
@@ -884,8 +913,11 @@ async function handleGraph(context, url) {
     merge: false,
     tags: tagMap.get(fields[0] ?? '') ?? [],
   }));
+  // Only this page's commits go over the wire; the client already holds the
+  // earlier ones and appends these.
+  const commits = window.slice(offset);
 
-  const layout = buildGraph(commits);
+  const layout = buildGraph(window);
 
   return {
     status: 200,
@@ -904,7 +936,7 @@ async function handleGraph(context, url) {
       graphWidth: layout.width,
       graphHeight: layout.height,
       hasMore,
-      loaded: commits.length,
+      loaded: window.length,
     },
   };
 }
@@ -1015,21 +1047,57 @@ export async function start(context) {
   /**
    * Read the request body as utf-8 text, capped at `limit` bytes so a runaway
    * POST cannot exhaust memory.
+   *
+   * On overflow we must NOT `req.destroy()`: that tears the socket down before
+   * `sendJson` can write the 400, so the client sees a bare connection reset
+   * instead of the designed error body. Instead we stop accumulating, let the
+   * stream drain (cheap — the bytes are discarded), and reject with a sentinel
+   * the caller turns into a proper HTTP response.
    * @param {import('node:http').IncomingMessage} req
    * @param {number} [limit]
    */
   function readRequestBody(req, limit = 8192) {
     return new Promise((resolve, reject) => {
+      /** @type {string} */
       let data = '';
-      req.on('data', (chunk) => {
+      /** @type {boolean} */
+      let overflowed = false;
+      /** @type {(() => void) | null} */
+      let onData = null;
+      /** @type {(() => void) | null} */
+      let onEnd = null;
+      /** @type {((error: Error) => void) | null} */
+      let onError = null;
+
+      const detach = () => {
+        if (onData) req.off('data', onData);
+        if (onEnd) req.off('end', onEnd);
+        if (onError) req.off('error', onError);
+      };
+
+      onData = (/** @type {Buffer} */ chunk) => {
+        if (overflowed) return; // draining: discard the remainder
         data += chunk.toString('utf-8');
         if (data.length > limit) {
-          req.destroy();
-          reject(new Error('body too large'));
+          overflowed = true;
+          data = '';
+          // Keep the listeners attached so the request finishes cleanly; the
+          // `end` handler below resolves the drain and the caller responds.
         }
-      });
-      req.on('end', () => resolve(data));
-      req.on('error', reject);
+      };
+      onEnd = () => {
+        detach();
+        if (overflowed) reject(Object.assign(new Error('body too large'), { status: 413 }));
+        else resolve(data);
+      };
+      onError = (/** @type {Error} */ error) => {
+        detach();
+        reject(error);
+      };
+
+      req.on('data', onData);
+      req.on('end', onEnd);
+      req.on('error', onError);
     });
   }
 
@@ -1051,6 +1119,10 @@ export async function start(context) {
           const text = await readRequestBody(request);
           patch = text ? JSON.parse(text) : {};
         } catch (error) {
+          const status = /** @type {{ status?: number }} */ (error).status;
+          if (status === 413) {
+            return { status: 413, body: { code: 'body_too_large', message: '请求体过大。' } };
+          }
           return { status: 400, body: { code: 'bad_body', message: '无法解析 prefs 请求体。' } };
         }
         try {

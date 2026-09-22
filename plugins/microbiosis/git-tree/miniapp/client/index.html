@@ -1639,18 +1639,26 @@
           api('/graph', graphParams(base), { timeoutMs: LONG_TIMEOUT_MS })
             .then(function (data) {
               var commits = data.commits || [];
-              var rows = data.rows || [];
-              var paths = data.paths || [];
               state.commits = state.commits.concat(commits);
-              state.rows = state.rows.concat(rows);
-              state.paths = state.paths.concat(paths);
-              state.edges = state.edges.concat(data.edges || []);
+              // Graph geometry arrays are absolute-indexed and belong to the
+              // whole accumulated list, so they replace rather than append.
+              // Concatenating them duplicated every page's rows and left the
+              // canvas sized to the first page only.
+              state.rows = data.rows || [];
+              state.edges = data.edges || [];
+              state.paths = data.paths || [];
               state.laneCount = Math.max(state.laneCount, data.laneCount || 1);
               state.graphHeight = data.graphHeight || state.graphHeight;
+              state.graphWidth = data.graphWidth || state.graphWidth;
               state.hasMore = !!data.hasMore;
               state.loadingMore = false;
-              // Append-only: avoid rebuilding the N rows already on screen.
+              // Append-only for the DOM rows: avoid rebuilding the N rows
+              // already on screen.
               appendRows(base, state.commits.length);
+              // ...but the canvas must be re-laid-out for the new rows, or the
+              // commits past the first page render with no lanes and no dots.
+              applyGraphSize();
+              renderCanvas();
               renderListMeta();
               button.disabled = false;
               button.textContent = '加载更多';
