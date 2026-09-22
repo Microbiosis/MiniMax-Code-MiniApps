@@ -164,6 +164,39 @@ function isSkippableDirectoryName(name) {
 }
 
 /**
+ * Subdirectory names under a drive root that suggest "projects live here".
+ * When such a directory exists one level under a scan base but does not
+ * itself contain `.git`, we recurse one level into it to catch layouts
+ * like `D:\Github\<repo>\` where the actual repositories are nested
+ * two levels deep under the drive root.
+ *
+ * Match is case-insensitive. The list covers English conventions
+ * (`github`, `code`, `projects`, …) and CJK variants seen on shared
+ * developer machines (`代码`, `项目`, …). Heuristic-only names that
+ * could collide with unrelated folders (e.g. `play`, `stuff`) are
+ * intentionally omitted to keep the recursion cheap and predictable.
+ */
+const DEV_PARENT_HINTS = new Set([
+  'github', 'code', 'codes', 'projects', 'project',
+  'workspace', 'workspaces',
+  'src', 'source', 'sources',
+  'dev', 'devel', 'development',
+  'work', 'works',
+  'git', 'gits', 'repos', 'repos', 'repositories', 'repository',
+  'gitlab', 'bitbucket', 'coding', 'playground', 'sandbox',
+  'opensources', 'oss', 'personal', 'private', 'public',
+  'practices', 'experiments',
+  // CJK variants occasionally seen on shared dev machines
+  '代码', '项目', '工程', '源码',
+]);
+
+/** @param {string} name */
+function isLikelyDevParentName(name) {
+  if (!name) return false;
+  return DEV_PARENT_HINTS.has(name.toLowerCase());
+}
+
+/**
  * Portability fallback for `repos.json` empty installs: derive a small, bounded
  * set of plausible dev directories. On macOS/Linux we stay under or one level
  * above `$HOME`; on Windows we also walk every mounted drive root because
@@ -272,7 +305,27 @@ async function buildRegistry(pluginRoot) {
         .slice(0, 60);
       for (const entry of directories) {
         const candidate = join(scanBase, entry.name);
-        if (await pathExists(join(candidate, '.git'))) add(candidate);
+        if (await pathExists(join(candidate, '.git'))) {
+          add(candidate);
+          continue;
+        }
+        // One-level recursion for entries that look like a dev parent. This
+        // surfaces layouts like `D:\Github\<repo>\` where the user's repos
+        // live two levels under a Windows drive root. Cost is bounded: one
+        // extra readdir per matching dev-parent entry, and we only recurse
+        // when the immediate child does not already carry `.git`.
+        if (isLikelyDevParentName(entry.name)) {
+          try {
+            const subEntries = await readdir(candidate, { withFileTypes: true });
+            for (const sub of subEntries) {
+              if (!sub.isDirectory() || isSkippableDirectoryName(sub.name)) continue;
+              const subCandidate = join(candidate, sub.name);
+              if (await pathExists(join(subCandidate, '.git'))) add(subCandidate);
+            }
+          } catch {
+            /* subdir unreadable: skip */
+          }
+        }
       }
     } catch {
       /* scan base unreadable: keep whatever was already found */
