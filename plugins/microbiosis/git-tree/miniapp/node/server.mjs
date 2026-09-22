@@ -300,31 +300,41 @@ async function buildRegistry(pluginRoot) {
   for (const scanBase of scanBases) {
     try {
       const entries = await readdir(scanBase, { withFileTypes: true });
-      const directories = entries
-        .filter((entry) => entry.isDirectory() && !isSkippableDirectoryName(entry.name))
-        .slice(0, 60);
-      for (const entry of directories) {
+      const directories = entries.filter(
+        (entry) => entry.isDirectory() && !isSkippableDirectoryName(entry.name),
+      );
+      // Direct `.git` check is uncapped: every non-skipped entry is probed
+      // with one stat. The earlier `slice(0, 60)` was a silent correctness
+      // bug — on a Windows drive root with 100+ entries (D:\ here has ~110)
+      // anything past index 60 was dropped before the `.git` check, so
+      // legitimate repos like `D:\synthetic-git-repo` could never appear.
+      // Stat-per-entry is cheap enough on a local SSD that the cap was
+      // never justified in the first place.
+      const directChecks = directories.map(async (entry) => {
         const candidate = join(scanBase, entry.name);
-        if (await pathExists(join(candidate, '.git'))) {
-          add(candidate);
-          continue;
-        }
-        // One-level recursion for entries that look like a dev parent. This
-        // surfaces layouts like `D:\Github\<repo>\` where the user's repos
-        // live two levels under a Windows drive root. Cost is bounded: one
-        // extra readdir per matching dev-parent entry, and we only recurse
-        // when the immediate child does not already carry `.git`.
-        if (isLikelyDevParentName(entry.name)) {
-          try {
-            const subEntries = await readdir(candidate, { withFileTypes: true });
-            for (const sub of subEntries) {
-              if (!sub.isDirectory() || isSkippableDirectoryName(sub.name)) continue;
-              const subCandidate = join(candidate, sub.name);
-              if (await pathExists(join(subCandidate, '.git'))) add(subCandidate);
-            }
-          } catch {
-            /* subdir unreadable: skip */
+        if (await pathExists(join(candidate, '.git'))) add(candidate);
+        return entry;
+      });
+      const directEntries = (await Promise.all(directChecks));
+      // Dev-parent recursion stays capped. Only entries that match
+      // `DEV_PARENT_HINTS` recurse one level, and we cap at 60 to bound
+      // the worst-case second-level readdir fan-out. Sorting dev-parent
+      // entries first keeps the most likely productive subtrees inside
+      // the cap even when the parent scan base has hundreds of entries.
+      const devParentEntries = directEntries
+        .filter((entry) => isLikelyDevParentName(entry.name))
+        .slice(0, 60);
+      for (const entry of devParentEntries) {
+        const candidate = join(scanBase, entry.name);
+        try {
+          const subEntries = await readdir(candidate, { withFileTypes: true });
+          for (const sub of subEntries) {
+            if (!sub.isDirectory() || isSkippableDirectoryName(sub.name)) continue;
+            const subCandidate = join(candidate, sub.name);
+            if (await pathExists(join(subCandidate, '.git'))) add(subCandidate);
           }
+        } catch {
+          /* subdir unreadable: skip */
         }
       }
     } catch {
@@ -333,7 +343,13 @@ async function buildRegistry(pluginRoot) {
   }
 
   if (preferred.length > 0 && repos.length > 0) repos[0].isDefault = true;
-  return { defaultRepo: preferred[0] ?? null, repos };
+  // Fallback path: when no walk-up produced a preferred repo, the registry
+  // still has entries but no `defaultRepo`. Mark the first entry as the
+  // default so the client dropdown opens with something selected instead
+  // of forcing the user to pick manually. The client also has its own
+  // `state.repos[0]` fallback, so this is a defense-in-depth nicety.
+  if (repos.length > 0 && !preferred.length) repos[0].isDefault = true;
+  return { defaultRepo: preferred[0] ?? repos[0]?.path ?? null, repos };
 }
 
 /** @param {string} value */
