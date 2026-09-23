@@ -12,6 +12,14 @@ This repository is open to the community: anyone can contribute a MiniApp plugin
 
 Packages are organized by author under `plugins/<github-username>/<plugin-id>/`. You can download an app, install it manually in MiniMax Code, and use its source as a starting point for your own work.
 
+## Featured example: Self-drive Route Planner
+
+This example shows the kind of professional workspace a MiniApp can provide: an Agent conversation on the left, a completed itinerary and route summary, and an interactive map and editable trip workspace on the right.
+
+![Self-drive Route Planner case study showing Agent collaboration and the MiniApp workspace](plugins/hanzijie/self-drive-route-planner/docs/case-study.png)
+
+*Self-drive Route Planner: an Agent-assisted weekend trip around Shanghai, with the final itinerary and synchronized route workspace visible together.*
+
 ## Product vision
 
 **Delivery between AI and knowledge workers should not be one-shot.** Code handoff between a coding agent and a programmer is rarely finished in one pass. Yet many AI products try to deliver a lawyer's, analyst's, or operator's work as a single final answer. Serious work moves from draft to final through human–AI collaboration and repeated refinement; that loop is still too fragmented.
