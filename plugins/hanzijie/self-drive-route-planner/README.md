@@ -4,6 +4,14 @@ A MiniMax Code Mini App for planning driving trips. It searches places, builds a
 
 The app works without credentials in **demo mode**. Real place search and driving routes use a user-provided Amap Web Service key.
 
+## See it in action
+
+This example shows an Agent conversation alongside the MiniApp workspace: candidate destinations are organized into a route-planning table, while the planner keeps the itinerary, map, route preferences, and live Agent activity in one place.
+
+![Self-drive Route Planner example showing Agent collaboration and the planning workspace](docs/case-study.png)
+
+*Example: planning a weekend self-drive trip around Shanghai with Agent-assisted research and an editable route workspace.*
+
 ## Install and open
 
 Copy the complete plugin directory, including the hidden `.minimax-plugin/` directory, into the Host-provided plugins directory:
@@ -27,14 +35,6 @@ Open **设置** in the Mini App to choose demo mode or paste an Amap key. The ke
 - Edit waypoint order, notes, departure times, and route preferences.
 - Synchronize changes made by the Agent through the local `route-planner` MCP endpoint.
 - Export a PDF itinerary or prepare a Xiaohongshu 3:4 image request through the bundled `xhs-route-cards` skill.
-
-## Example
-
-This example shows an Agent conversation alongside the MiniApp workspace: candidate destinations are organized into a route-planning table, while the planner keeps the itinerary, map, route preferences, and live Agent activity in one place.
-
-![Self-drive Route Planner example showing Agent collaboration and the planning workspace](docs/case-study.png)
-
-*Example: planning a weekend self-drive trip around Shanghai with Agent-assisted research and an editable route workspace.*
 
 ## Tested environment
 
