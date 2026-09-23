@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 The official community repository for **MiniApps built for the MiniMax Code desktop app**. Discover useful tools, playful experiments, and apps you can make your own.
 
-[Product vision](#product-vision) · [Architecture](#architecture) · [Explore MiniApps](#miniapps) · [Get started](#getting-started) · [Contribute](CONTRIBUTING.md) · [Report an issue](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues)
+[Product vision](#pursuing-human-in-the-loop-toward-agent-os) · [Architecture](#architecture) · [Explore MiniApps](#miniapps) · [Get started](#getting-started) · [Contribute](CONTRIBUTING.md) · [Report an issue](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues)
 
 ## About
 
@@ -12,19 +12,15 @@ This repository is open to the community: anyone can contribute a MiniApp plugin
 
 Packages are organized by author under `plugins/<github-username>/<plugin-id>/`. You can download an app, install it manually in MiniMax Code, and use its source as a starting point for your own work.
 
-## Featured example: Self-drive Route Planner
+## Pursuing Human in the Loop, Toward Agent OS
 
-This example shows the kind of professional workspace a MiniApp can provide: an Agent conversation on the left, a completed itinerary and route summary, and an interactive map and editable trip workspace on the right.
-
-![Self-drive Route Planner case study showing Agent collaboration and the MiniApp workspace](plugins/hanzijie/self-drive-route-planner/docs/case-study.png)
-
-*Self-drive Route Planner: an Agent-assisted weekend trip around Shanghai, with the final itinerary and synchronized route workspace visible together.*
-
-## Product vision
-
-**Delivery between AI and knowledge workers should not be one-shot.** Code handoff between a coding agent and a programmer is rarely finished in one pass. Yet many AI products try to deliver a lawyer's, analyst's, or operator's work as a single final answer. Serious work moves from draft to final through human–AI collaboration and repeated refinement; that loop is still too fragmented.
+**Delivery between AI and knowledge workers should not be one-shot.** Code delivery between a coding agent and a programmer is not completed in one pass. Yet many AI products try to deliver a lawyer's, analyst's, or operator's work as a single final answer. Serious work moves from draft to final through human–AI collaboration and repeated refinement; that loop is still too fragmented. Human–AI collaboration is still at a very early stage.
 
 Programmers write in an IDE; lawyers, analysts, and operators write in their own professional environments. Real work, like software development, advances continuously and gets refined until it is stable and ready to deliver. An AI that writes once and walks away is irresponsible in serious work, because **the goal is not text generation, but delivery.**
+
+> *Self-drive Route Planner case: an Agent-assisted weekend trip around Shanghai, with the final itinerary and synchronized route workspace visible together.* This case shows the kind of professional workspace a MiniApp can provide: the Agent conversation and complete itinerary are on the left, while the route summary, interactive map, and editable trip workspace are on the right.
+
+![Self-drive Route Planner case study showing Agent collaboration and the MiniApp workspace](plugins/hanzijie/self-drive-route-planner/docs/case-study.png)
 
 **MiniApp's product stance: keep people involved in collaboration and decisions (Human-in-the-Loop).**
 
@@ -66,7 +62,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | Explore local Token usage by date, model, and session, including input, output, and cache usage | [amszuidas](https://github.com/amszuidas) |
 | [Token Usage Board](plugins/yanhy2000/mcode-usage-monitor/) | Watch local Token usage, output speed, and cache hit rate in near real time; filter by time range, model, and session | [yanhy2000](https://github.com/yanhy2000) |
 | [Model Manager](plugins/ocoomber/openrouter-model-manager/) | Browse, search, and enable/disable models in your `~/.minimax/config.yaml` with instant save, bulk actions, one-click undo, and automatic backups | [ocoomber](https://github.com/ocoomber) |
-| [Self-drive Route Planner](plugins/hanzijie/self-drive-route-planner/) | 【Offical Plugin】Plan driving routes with place search, route alternatives, demo mode, and Xiaohongshu 3:4 itinerary cards | [HanZijie](https://github.com/HanZijie) |
+| [Self-drive Route Planner](plugins/hanzijie/self-drive-route-planner/) | **Official plugin** for planning driving routes with place search, route alternatives, demo mode, and Xiaohongshu 3:4 itinerary cards | [HanZijie](https://github.com/HanZijie) |
 
 <details>
 <summary>Preview: Token Usage Board</summary>
