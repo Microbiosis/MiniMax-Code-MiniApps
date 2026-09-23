@@ -18,7 +18,7 @@ Packages are organized by author under `plugins/<github-username>/<plugin-id>/`.
 | --- | --- | --- |
 | [Token Usage Board](plugins/amszuidas/mcode-token-usage-board/) | Explore local Token usage by date, model, and session, including input, output, and cache usage | [amszuidas](https://github.com/amszuidas) |
 | [Token Usage Board](plugins/yanhy2000/mcode-usage-monitor/) | Watch local Token usage, output speed, and cache hit rate in near real time; filter by time range, model, and session | [yanhy2000](https://github.com/yanhy2000) |
-| [Self-drive Route Planner](plugins/hanzijie/self-drive-route-planner/) | Plan driving routes with place search, route alternatives, demo mode, and Xiaohongshu 3:4 itinerary cards | [HanZijie](https://github.com/HanZijie) |
+| [Self-drive Route Planner](plugins/hanzijie/self-drive-route-planner/) | 【Offical Plugin】Plan driving routes with place search, route alternatives, demo mode, and Xiaohongshu 3:4 itinerary cards | [HanZijie](https://github.com/HanZijie) |
 
 <details>
 <summary>Preview: Token Usage Board</summary>
