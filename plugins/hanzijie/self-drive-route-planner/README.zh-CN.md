@@ -28,6 +28,14 @@
 - 通过本地 `route-planner` MCP 端点同步 Agent 对行程的修改。
 - 导出 PDF 行程手册，或通过内置 `xhs-route-cards` Skill 准备小红书 3:4 图片请求。
 
+## 案例
+
+下面的案例同时展示了 Agent 对话和 MiniApp 工作台：候选目的地被整理成路线规划表，行程、地图、路线偏好与 Agent 的实时操作则集中在同一个可编辑的工作界面中。
+
+![自驾规划案例：Agent 协作与路线规划工作台](docs/case-study.png)
+
+*案例：在 Agent 协助下规划上海周边周末自驾，并在工作台中继续编辑路线。*
+
 ## Tested environment
 
 - 已在 Node.js 26.0.0 上运行 `npm run check`（仓库 CI 使用 Node.js 22）。

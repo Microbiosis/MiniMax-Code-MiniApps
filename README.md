@@ -4,13 +4,52 @@ English | [简体中文](README.zh-CN.md)
 
 The official community repository for **MiniApps built for the MiniMax Code desktop app**. Discover useful tools, playful experiments, and apps you can make your own.
 
-[Explore MiniApps](#miniapps) · [Get started](#getting-started) · [Contribute](CONTRIBUTING.md) · [Report an issue](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues)
+[Product vision](#product-vision) · [Architecture](#architecture) · [Explore MiniApps](#miniapps) · [Get started](#getting-started) · [Contribute](CONTRIBUTING.md) · [Report an issue](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues)
 
 ## About
 
 This repository is open to the community: anyone can contribute a MiniApp plugin by opening a pull request. MiniApps are interactive apps packaged as MiniMax Plugins. This repository brings together complete, self-contained plugin packages contributed by developers, with source files and usage instructions alongside each app.
 
 Packages are organized by author under `plugins/<github-username>/<plugin-id>/`. You can download an app, install it manually in MiniMax Code, and use its source as a starting point for your own work.
+
+## Product vision
+
+**Delivery between AI and knowledge workers should not be one-shot.** Code handoff between a coding agent and a programmer is rarely finished in one pass. Yet many AI products try to deliver a lawyer's, analyst's, or operator's work as a single final answer. Serious work moves from draft to final through human–AI collaboration and repeated refinement; that loop is still too fragmented.
+
+Programmers write in an IDE; lawyers, analysts, and operators write in their own professional environments. Real work, like software development, advances continuously and gets refined until it is stable and ready to deliver. An AI that writes once and walks away is irresponsible in serious work, because **the goal is not text generation, but delivery.**
+
+**MiniApp's product stance: keep people involved in collaboration and decisions (Human-in-the-Loop).**
+
+We respect every industry, every profession, and the expertise people build over time. AI should be your smartest executor—amplifying your capabilities rather than pretending to have professional judgment on your behalf. MiniApps reconnect the part of the process that is too often split apart: turning work from something that can be refined into something that can be delivered.
+
+Our aim is to provide every industry with its own **professional IDE framework**: a place where AI can work while people can review, edit, and confirm at any point.
+
+We want users to be able to:
+
+- **Connect capabilities:** Reliably connect and use open-source MCP servers and first-party plugins, bringing data and actions into a professional workflow.
+- **Build an interface:** Create a workspace that fits the way each industry actually works.
+- **Collaborate at any time:** Make an Agent an always-available, dependable work assistant. And, of course, use it for anything else that is interesting or useful.
+
+In the way of working we envision, a lawyer would not submit an AI-written pleading directly to a court; an analyst would not make an investment decision directly from an AI-generated opinion; and an operator would not launch an AI-generated campaign unchanged.
+
+Instead, they would ask AI to research background, organize material, prepare a first draft, improve the expression, and find omissions—then return to their professional workspace to **review, edit, confirm, and let AI continue.**
+
+MiniApps enforce this boundary in the product: when content from a MiniApp page is handed to the Agent, it first enters the user's input box. The user can edit and confirm it before sending. AI never presses the Send button on the user's behalf.
+
+## Architecture
+
+MiniApps run inside the MiniMax Code desktop host through four cooperating layers:
+
+- **Host management:** The host provides Electron page hosting, runtime services, plugin installation and publishing, Node process lifecycle, readiness and instance management, and permissions and credentials. It provides control across the stack while business logic remains owned by each plugin.
+- **Presentation layer (Chromium / Chrome engine):** The MiniApp page renders HTML, CSS, and JavaScript for filters, tables, charts, and interactive views. Host credentials stay out of the page.
+- **Application layer (Node.js):** The Node process owns data aggregation, transformation and processing, business rules, and persistence. Page APIs and Agent tools reuse the same business services. Node can also provide a managed MCP service for the host MCP client.
+- **Capabilities and data access:** Plugins can use available Host Connector access, optional plugin-spawned CLI child processes, and the planned unified tool entry for authorized Connector or MCP access to external services, MCP services, local tools, and local data.
+
+The MiniMax Code Agent communicates through the host MCP client. Business requests and page data move between the presentation and application layers, while Agent calls and results are mediated by the host. This keeps credentials and control in the host, and keeps domain logic and persistence in the plugin.
+
+![MiniApp technical architecture](docs/architecture/miniapp-technical-architecture-en.png)
+
+*English architecture diagram: MiniMax Code Desktop Host, presentation, application, and capabilities/data access layers.*
 
 ## MiniApps
 

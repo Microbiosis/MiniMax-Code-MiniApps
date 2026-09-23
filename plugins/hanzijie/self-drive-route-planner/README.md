@@ -28,6 +28,14 @@ Open **设置** in the Mini App to choose demo mode or paste an Amap key. The ke
 - Synchronize changes made by the Agent through the local `route-planner` MCP endpoint.
 - Export a PDF itinerary or prepare a Xiaohongshu 3:4 image request through the bundled `xhs-route-cards` skill.
 
+## Example
+
+This example shows an Agent conversation alongside the MiniApp workspace: candidate destinations are organized into a route-planning table, while the planner keeps the itinerary, map, route preferences, and live Agent activity in one place.
+
+![Self-drive Route Planner example showing Agent collaboration and the planning workspace](docs/case-study.png)
+
+*Example: planning a weekend self-drive trip around Shanghai with Agent-assisted research and an editable route workspace.*
+
 ## Tested environment
 
 - Package checks: `npm run check` on Node.js 26.0.0 (the repository CI runs Node.js 22).
