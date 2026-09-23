@@ -98,6 +98,8 @@ git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
 
 欢迎通过 [GitHub Issues](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues) 反馈问题、分享作品想法或提出改进建议。反馈插件问题时，请提供插件 ID 和版本、MiniMax Code 版本、操作系统、复现步骤，以及预期和实际结果。日志和截图请移除凭据及私人会话内容。
 
+如果你希望 MiniApp 获得目前还不具备的运行时能力（例如新的 `context` API 或窗口行为），请直接在置顶的[能力愿望单](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues/9)下评论，不必另开 issue。
+
 ## 许可证
 
 本仓库采用 [MIT License](LICENSE)。各 MiniApp 以其目录中附带的许可证为准。
