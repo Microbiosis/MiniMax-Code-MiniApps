@@ -98,6 +98,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 Use [GitHub Issues](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues) to report a problem or suggest an app or improvement. For an app issue, include its ID and version, your MiniMax Code version, operating system, steps to reproduce, and the expected and actual behavior. Remove credentials and private session content from logs and screenshots.
 
+To ask for a runtime capability that MiniApps do not have yet, such as a new `context` API or window behaviour, comment on the pinned [capability wishlist](https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/issues/9) instead of opening a new issue.
+
 ## License
 
 This repository is licensed under the [MIT License](LICENSE). Individual MiniApps are governed by the licenses included in their own directories.
