@@ -64,7 +64,15 @@
 
 页面位于 `miniapp/client/index.html`(单文件、单 SVG canvas、行内脚本),Node 入口位于 `miniapp/node/server.mjs`,泳道算法位于 `miniapp/node/git-graph.mjs`。
 
-无需构建。已验证环境:MiniMax Code 桌面端 `3.0.73.166`,Windows(10.0.26200,x64)。macOS 与 Linux 未验证。
+无需构建。
+
+## 数据与访问
+
+所有读取都是对本机仓库的本地 `git` 命令调用,仓库来自你在 `repos.json` 中声明的路径或扫描器在本机发现的目录。不上传任何数据,插件不发起任何对外网络请求。唯一的写入是 `<dataDir>/prefs.json`,只保存「偏好持久化」一节列出的筛选与主题字段。
+
+## 测试环境
+
+MiniMax Code 桌面端 `3.0.73.166`,Windows 10.0.26200(x64)。macOS 与 Linux 未验证。
 
 ## 许可证
 

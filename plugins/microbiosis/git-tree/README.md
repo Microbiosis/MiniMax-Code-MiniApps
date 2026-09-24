@@ -64,7 +64,15 @@ Set "Auto refresh" to 5 / 10 / 30 / 60 seconds. The page re-fetches overview and
 
 The Client is at `miniapp/client/index.html` — single HTML file, single SVG canvas, inline script. The Node entry is at `miniapp/node/server.mjs`. The lane-assignment algorithm is at `miniapp/node/git-graph.mjs`.
 
-No build step. Verified on MiniMax Code desktop `3.0.73.166`, Windows (10.0.26200, x64). macOS and Linux not verified.
+No build step.
+
+## Data & access
+
+Every read is a local `git` invocation against a repository you declared in `repos.json` or one the scanner found on this machine. Nothing is uploaded, and the plugin makes no outbound network requests. The only write is `<dataDir>/prefs.json`, which stores just the filter and theme keys listed under Preferences.
+
+## Tested environment
+
+MiniMax Code desktop `3.0.73.166`, Windows 10.0.26200 (x64). macOS and Linux not verified.
 
 ## License
 
