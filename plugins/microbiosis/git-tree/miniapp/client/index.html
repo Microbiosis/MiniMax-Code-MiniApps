@@ -422,13 +422,6 @@
         padding-right: 8px;
       }
 
-      .row-refs {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        flex: none;
-      }
-
       .ref-chip {
         display: inline-flex;
         align-items: center;
@@ -445,12 +438,6 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-      }
-
-      .ref-chip.is-head {
-        border-color: var(--git-lane-0);
-        background: var(--mcode-surface-hover);
-        color: var(--mcode-text);
       }
 
       .ref-chip.is-tag {
@@ -1205,24 +1192,9 @@
           return 'lane-color-' + (((laneIndex % 4) + 4) % 4);
         }
 
-        function refsHtml(commit) {
-          if (!commit || !commit.refs || commit.refs.length === 0) return '';
-          return commit.refs.slice(0, 4).map(function (ref) {
-            var kindClass = ref.kind === 'head' ? ' is-head' : ref.kind === 'tag' ? ' is-tag' : '';
-            var icon =
-              ref.kind === 'tag'
-                ? '<svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><path d="M2 3.5h10l2 2v6.5H2Zm0 0v8.5"/><circle cx="6" cy="6.5" r="1.4" fill="currentColor" stroke="none"/></svg>'
-                : ref.kind === 'head'
-                  ? '<svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="5" cy="13" r="1.4"/><path d="M5 11.6V3l7 3-7 3"/></svg>'
-                  : '';
-            return '<span class="ref-chip' + kindClass + '" title="' + esc(ref.kind + ': ' + ref.name) + '">' + icon + esc(ref.name) + '</span>';
-          }).join('');
-        }
-
         function rowHtml(commit, index) {
           var selected = state.selectedSha === commit.sha;
           var hoverClass = state.hoveredSha && state.hoveredSha !== commit.sha ? ' is-dimmed' : '';
-          var refs = refsHtml(commit);
           var mergeIcon = commit.merge
             ? '<svg class="merge-icon" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><circle cx="3" cy="3" r="1.6"/><circle cx="3" cy="13" r="1.6"/><circle cx="11" cy="6" r="1.6"/><path d="M3 4.6v6.8M4.6 13h0M11 7.6v3.5a1.6 1.6 0 0 1-1.6 1.6H7.4"/></svg>'
             : '';
@@ -1232,7 +1204,6 @@
             '" data-sha="' + esc(commit.sha) + '" data-index="' + index + '">' +
             '<span class="row-graph-spacer" aria-hidden="true"></span>' +
             '<span class="row-subject-cell">' +
-            (refs ? '<span class="row-refs">' + refs + '</span>' : '') +
             '<span class="row-subject" title="' + esc(commit.subject || '') + '">' + esc(commit.subject || '（无提交信息）') + '</span>' +
             mergeIcon +
             '</span>' +

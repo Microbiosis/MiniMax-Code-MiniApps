@@ -4,7 +4,7 @@
 
 Inspect a local Git repository's commit history from MiniMax Code: swim-lane commit graph, branches and tags, commit detail and per-file change stats, with optional auto-refresh and persisted filter preferences.
 
-Author: Microbiosis · Version: 1.1.0
+Author: [Microbiosis](https://github.com/Microbiosis) · Version: `1.1.0`
 
 ![Git commit tree preview](docs/preview.jpg)
 
@@ -18,7 +18,7 @@ Copy this directory into the active MiniMax Code data directory under `plugins/`
 
 Keep the hidden `.minimax-plugin/` directory. Restart MiniMax Code with Mini App support, confirm the plugin is recognized, then open "Git 提交树" — either from the plugin list or by asking the assistant.
 
-The page loads the first 200 commits of the active repo (configurable via `repos.json`). Use the ref dropdown to filter by branch or tag, the search box to match commit subjects, the author box to match authors, and the "Auto refresh" dropdown to keep the view in sync with new pushes.
+The page loads the first 200 commits of the active repo. 200 is a fixed page size on the client, not a setting in `repos.json`; narrow the result set with the ref dropdown (branch or tag), the search box (commit subject), and the author box, or use "Auto refresh" to keep the view in sync with new pushes.
 
 ## What it shows
 
@@ -27,8 +27,8 @@ The page loads the first 200 commits of the active repo (configurable via `repos
 | Stats grid | `git rev-list --all --count`, `for-each-ref`, `tag --list`, `status --porcelain` | Total commits, branches, tags, working-tree changes |
 | Worktree chips | `git status --porcelain` | Current branch + the first 6 changed paths |
 | Commit graph | `git log --topo-order` + custom lane algorithm (ported from `zai-org/ZCode`) | Single SVG canvas: paths, dots, selection ring, hover highlight |
-| Commit rows | `git log` + `git tag --contains` | 4-column grid (refs + subject / date / author / hash); refs chip with `is-head` and `is-tag` styling |
-| Inline detail (toggle) | server-side `/api/commit` | Subject, refs, file changes table, body — appears below the list and can be collapsed |
+| Commit rows | `git log` + `git tag --contains` | 4-column grid (subject / date / author / hash) |
+| Inline detail (toggle) | server-side `/api/commit` | Subject, branches/tags chips, file changes table, body — appears below the list and can be collapsed |
 | Right detail (always on) | server-side `/api/commit` | Same payload as inline; selection and inline are independent |
 
 ## Data sources & caching
@@ -39,7 +39,7 @@ The page loads the first 200 commits of the active repo (configurable via `repos
 - **Commit detail**: `git show -s` + `git show --numstat` + `branch --contains` + `tag --contains`, cached **60 s** per `(repo, sha)`. The client mirrors this cache for 60 s as well, so re-clicking a row is free.
 - **Tags for graph**: `git log --all --simplify-by-decoration --format=%H %D`, cached 60 s per repo.
 - **Compression**: API responses ≥ 256 bytes are gzipped when the client advertises `Accept-Encoding: gzip`.
-- **Timeouts**: quick reads (for-each-ref, tag --list, contains checks) 10 s; medium reads (log -n 1, status, git show) 15 s; heavy reads (log --topo-order --all, rev-list --all --count) 30 s. Client `api()` caps at 35 s with `AbortController`.
+- **Timeouts**: quick reads (for-each-ref, tag --list, contains checks) 10 s; medium reads (log -n 1, status, git show) 15 s; heavy reads (log --topo-order --all, rev-list --all --count) 30 s. Client `api()` caps at 35 s by default and 60 s for graph requests, using `AbortController`.
 
 ## Preferences
 
@@ -68,7 +68,19 @@ No build step.
 
 ## Data & access
 
-Every read is a local `git` invocation against a repository you declared in `repos.json` or one the scanner found on this machine. Nothing is uploaded, and the plugin makes no outbound network requests. The only write is `<dataDir>/prefs.json`, which stores just the filter and theme keys listed under Preferences.
+**What the plugin reads.** Every read is a local `git` invocation against a repository you declared in `repos.json` or one the scanner found on this machine. Git reads `.git` internals and working-tree metadata (for example `git status`) inside those repositories only.
+
+**How repositories are discovered.** Discovery enumerates *directory names* and checks each candidate for a `.git` entry; it never reads the contents of files it is not already pointed at. The scan surface is wider than `repos.json`:
+
+- Your home development directories (`~/Code`, `~/Projects`, `~/repos`, `~/workspace`, `~/src`, `~/source`, `~/dev`, `~/work`, `~/Documents`, `~/git`), plus the plugin root and process cwd walk-up.
+- On Windows, the root of every mounted drive letter (`A:\` … `Z:\`), which includes mapped network drives. System directories are filtered out.
+- On macOS and Linux, the parent of your home directory (`/Users`, `/home`), which lists the *names* of other local user accounts' home directories.
+
+This only runs when neither `repos.json` nor the walk-up produced a scan base.
+
+**What the plugin writes.** The only write is `<dataDir>/prefs.json`, which stores just the filter and theme keys listed under Preferences.
+
+**Network.** Nothing is uploaded, and the plugin makes no outbound network requests.
 
 ## Tested environment
 

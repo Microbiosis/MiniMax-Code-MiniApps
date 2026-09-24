@@ -304,10 +304,14 @@ async function buildRegistry(pluginRoot) {
   // drive root. This lets a fresh install on a brand-new host surface
   // projects without any manual configuration.
   //
+  // The `config.repos.length === 0` half of the gate matters: without it a
+  // user who listed their repos explicitly would still get a whole-disk
+  // scan, which is far more file access than they asked for.
+  //
   // On Windows the per-entry filter below drops system hives (`Program
   // Files`, `Users`, `Windows`, …) so widening to drive roots cannot
   // accidentally recurse into %ProgramFiles% or %SystemRoot%.
-  if (scanBases.size === 0) {
+  if (scanBases.size === 0 && config.repos.length === 0) {
     for (const base of discoverDefaultScanBases()) {
       scanBases.add(resolve(base));
     }

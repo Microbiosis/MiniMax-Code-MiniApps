@@ -4,7 +4,7 @@
 
 在 MiniMax Code 里查看本机 Git 仓库的提交历史：泳道提交图、分支与标签、提交详情和文件改动统计,支持自动刷新与筛选偏好持久化。
 
-作者:Microbiosis · 版本:`1.1.0`
+作者:[Microbiosis](https://github.com/Microbiosis) · 版本:`1.1.0`
 
 ![Git 提交树预览](docs/preview.jpg)
 
@@ -18,7 +18,7 @@
 
 保留 `.minimax-plugin/` 隐藏目录。重新启动支持 Mini App 的 MiniMax Code,确认插件已被识别并启用,然后打开「Git 提交树」,或在对话中请求打开它。
 
-页面默认加载当前仓库最近 200 条提交(可在 `repos.json` 中配置)。通过引用下拉过滤分支或标签,用搜索框匹配提交信息,用作者框匹配作者,用「自动刷新」下拉保持视图与新推送同步。
+页面默认加载当前仓库最近 200 条提交。200 是客户端固定分页大小,不是 `repos.json` 里的配置项;可用引用下拉(分支或标签)、搜索框(提交信息)和作者框收窄结果,或用「自动刷新」下拉保持视图与新推送同步。
 
 ## 页面分区
 
@@ -27,8 +27,8 @@
 | 统计卡片 | `git rev-list --all --count`、`for-each-ref`、`tag --list`、`status --porcelain` | 提交总数、分支数、标签数、工作区改动数 |
 | 工作区条 | `git status --porcelain` | 当前分支 + 前 6 个改动路径 chip |
 | 提交图 | `git log --topo-order` + 自定义泳道算法(移植自 `zai-org/ZCode`) | 单 SVG canvas:path、dot、选中环、悬停高亮 |
-| 提交行 | `git log` + `git tag --contains` | 4 列网格(refs+subject / date / author / hash);refs chip 用 `is-head`、`is-tag` 区分边框色 |
-| 行内详情(可折叠) | 服务端 `/api/commit` | 标题、refs、文件改动表、body — 出现在列表下方,可折叠 |
+| 提交行 | `git log` + `git tag --contains` | 4 列网格(subject / date / author / hash) |
+| 行内详情(可折叠) | 服务端 `/api/commit` | 标题、分支/标签 chip、文件改动表、body — 出现在列表下方,可折叠 |
 | 右侧详情(常驻) | 服务端 `/api/commit` | 同上行内;选中态与行内互相独立 |
 
 ## 数据源与缓存
@@ -39,7 +39,7 @@
 - **提交详情**:`git show -s` + `git show --numstat` + `branch --contains` + `tag --contains`,按 `(repo, sha)` 缓存 **60 秒**。客户端镜像同一缓存,重复点同一条提交零成本。
 - **图的标签**:`git log --all --simplify-by-decoration --format=%H %D`,按仓库缓存 60 秒。
 - **响应压缩**:API 响应 ≥ 256 字节且客户端带 `Accept-Encoding: gzip` 时自动 gzip。
-- **超时分级**:快速读(`for-each-ref`、`tag --list`、`--contains`)10 秒;中速读(`log -n 1`、`status`、`git show`)15 秒;重量级读(`log --topo-order --all`、`rev-list --all --count`)30 秒。客户端 `api()` 用 `AbortController` 兜底 35 秒。
+- **超时分级**:快速读(`for-each-ref`、`tag --list`、`--contains`)10 秒;中速读(`log -n 1`、`status`、`git show`)15 秒;重量级读(`log --topo-order --all`、`rev-list --all --count`)30 秒。客户端 `api()` 默认用 `AbortController` 兜底 35 秒,提交图请求放宽到 60 秒。
 
 ## 偏好持久化
 
@@ -68,7 +68,19 @@
 
 ## 数据与访问
 
-所有读取都是对本机仓库的本地 `git` 命令调用,仓库来自你在 `repos.json` 中声明的路径或扫描器在本机发现的目录。不上传任何数据,插件不发起任何对外网络请求。唯一的写入是 `<dataDir>/prefs.json`,只保存「偏好持久化」一节列出的筛选与主题字段。
+**读取范围**。所有读取都是对本机仓库的本地 `git` 命令调用,仓库来自你在 `repos.json` 中声明的路径或扫描器在本机发现的目录。`git` 只读取这些仓库内部的 `.git` 数据和工作区元数据(例如 `git status`)。
+
+**仓库发现方式**。发现逻辑只枚举*目录名*并检查候选目录里是否存在 `.git` 条目,不会读取无关文件的内容。扫描面比 `repos.json` 更宽:
+
+- 你的主目录下的开发目录(`~/Code`、`~/Projects`、`~/repos`、`~/workspace`、`~/src`、`~/source`、`~/dev`、`~/work`、`~/Documents`、`~/git`),以及从插件根和工作目录向上查找。
+- Windows 上每个已挂载盘符的根目录(`A:\` 到 `Z:\`),其中包含映射的网络驱动器;系统目录会被过滤掉。
+- macOS 与 Linux 上主目录的父目录(`/Users`、`/home`),这会列出本机其他用户账户的*目录名*。
+
+只有在 `repos.json` 与向上查找都没有产出任何扫描基址时,才会执行上述扫描。
+
+**写入范围**。唯一的写入是 `<dataDir>/prefs.json`,只保存「偏好持久化」一节列出的筛选与主题字段。
+
+**网络**。不上传任何数据,插件不发起任何对外网络请求。
 
 ## 测试环境
 
