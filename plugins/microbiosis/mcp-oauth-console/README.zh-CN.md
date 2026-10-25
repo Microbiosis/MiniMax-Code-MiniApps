@@ -1,0 +1,117 @@
+# MCP OAuth 令牌台
+
+简体中文 | [English](README.md)
+
+给需要 OAuth 的 MCP 服务器完成登录：在浏览器里跑授权码 + PKCE 流程，令牌全程不进页面，把 `Authorization` 头写进 MiniMax Code 的 MCP 配置，并在到期前自动续期。
+
+作者：[Microbiosis](https://github.com/Microbiosis) · 版本：`1.0.0`
+
+## 安装与使用
+
+把整个目录复制到 MiniMax Code 的数据目录下 `plugins/`。`<dataDir>` 默认是 `~/.minimax`，因此默认安装路径是：
+
+```text
+<dataDir>/plugins/mcp-oauth-console/
+```
+
+保留隐藏的 `.minimax-plugin/` 目录。重启 MiniMax Code，确认插件已被识别，然后从插件列表打开「MCP OAuth 令牌台」，或直接让助手打开它。
+
+页面会列出 MiniMax Code 配置里的每一个 MCP 服务器，并为每一行显示**两件互相独立的事**：**服务端要求什么**（向端点探测得到）和**本机持有什么**（本地配置里的凭证）。一个服务器可能要求 OAuth、同时又被本地令牌满足；也可能不需要 OAuth、却并没有配令牌。分开显示，两者都不会互相遮蔽。
+
+| 操作 | 行为 |
+|---|---|
+| 检测 | 按服务端声明的传输方式重新探测，结果显示在**该服务器自己那一行** |
+| 授权登录 | 走完授权码 + PKCE 流程：动态注册客户端、浏览器同意、接收回调，然后弹出确认框，明确告诉你将改动哪个字段 |
+| 确认写入 | 改写 `mcp.json` 里 `mcpServers.<name>.headers.Authorization`，先备份，再用真实的 MCP 握手验活 |
+| 刷新令牌 | 用已存的 refresh_token 换新 access_token 并写回 |
+| 刷新即将过期 | 刷新所有距过期不足 30 分钟的令牌 |
+
+## 探测是怎么做的
+
+探针使用服务端在配置里声明的传输方式：
+
+- `streamable-http`：发真实的 `initialize` JSON-RPC 调用。
+- `sse`：发一个 `GET` 开事件流。对 `/sse` 发 POST 不是该传输的合法调用，只会得到 `405`。
+
+**单凭一个 401 不等于 OAuth。** 只有 `WWW-Authenticate: Bearer resource_metadata="…"` 才被当作 OAuth 声明——这是 MCP 服务器指向自己授权服务器的方式（RFC 9728）。所以页面区分：
+
+| 结论 | 含义 |
+|---|---|
+| 需要 OAuth | 401 + 可发现的授权服务器，可以跑浏览器流程 |
+| 需要 Bearer 凭证 | 401 + Bearer challenge，但没有 `resource_metadata`，找不到授权服务器 |
+| 需要凭证·方式未声明 | 401 且没有可用的 challenge。端点要的是**某种**凭证（例如 API key），不一定是 OAuth |
+| 未要求 OAuth | 未认证的握手被接受了 |
+| 不确定 | 端点返回了别的东西（404、405、5xx），或根本连不上 |
+
+服务端没有声明 OAuth 时，页面不会提供浏览器授权流程——没有授权服务器可供对着跑，此时只能手工配置请求头。
+
+## 数据与访问
+
+### 读取的文件
+
+| 文件 | 用途 |
+|---|---|
+| MiniMax Code 的 MCP 服务器配置（`mcp.json`） | 要检查的服务器列表，以及要写入的请求头 |
+
+`mcp.json` 是宿主文件，插件没有受支持的 API 访问它。本插件的定位方式依次是：从 `context.dataDir` 向上找、从进程工作目录向上找、从 Node 可执行文件所在目录向上找，最后回落到 `~/.minimax/mcp.json`。**这依赖未公开的布局**：如果宿主把配置放在别处，插件会找不到服务器并显示空列表。
+
+旧版本插件遗留在 `mcp.json` 旁边的凭据目录会被读取一次并导入 `context.dataDir`，之后不再写入。
+
+### 写入的文件
+
+| 文件 | 内容 |
+|---|---|
+| `mcp.json` | 只改某个服务器条目的 `Authorization` 头。改写是手术式的：文件其余部分逐字节不变。 |
+| `<dataDir>/mcp-credentials/<server>.json` | 凭证：client id、client secret、refresh_token、access_token、scope、过期时间 |
+| `<dataDir>/mcp.json.bak` | 每次写入前对 `mcp.json` 的备份 |
+
+对 `mcp.json` 的写入是原子的：先在同目录写临时文件，再 rename。原始文件权限会被带过去（临时文件默认是默认权限）。写入被串行化，两次写入不会交错。写入失败时临时文件会被删除，原内容保持不变。
+
+### 出网主机
+
+插件只访问两类主机：
+
+1. MCP 配置里列出的 MCP 端点——用于探测和写入后的验活握手。
+2. 这些服务器的 OAuth 端点——取自它们的元数据：授权端点、令牌端点、受保护资源文档，以及 `.well-known` 的授权服务器元数据。
+
+除此之外不访问任何主机。没有埋点、没有分析服务、没有第三方服务。
+
+请求前会校验目标 URL：只允许 `https`（回环地址允许 `http`）、URL 里不允许带账号密码、实例元数据地址与链路本地地址一律拒绝。
+
+### 启动的子进程
+
+| 命令 | 时机 |
+|---|---|
+| `explorer.exe <authorization-url>`（Windows）或 `open <authorization-url>`（macOS） | 每次授权一次，用于在默认浏览器打开同意页 |
+
+参数以 argv 数组传入，绝不经过 shell。URL 是依据服务端自己的元数据拼出的授权请求。
+
+### 状态存放位置
+
+所有持久状态都放在 `context.dataDir`——宿主为这个插件创建的私有目录。除了上面列出的 MCP 配置，不会写到它以外的地方。
+
+### 凭据
+
+令牌本体始终留在 Node 进程里。页面只拿到元信息：scope、过期时间，以及一个八位 SHA-256 指纹，用来分辨两个令牌是否不同。指纹不可逆，也不能当凭据用。凭据不会出现在 HTML、客户端 JavaScript、日志或错误响应中。
+
+## 测试环境
+
+| | |
+|---|---|
+| MiniMax Code | 3.1.6（Windows） |
+| 平台 | Windows 11，Node 22 及以上 |
+| 授权服务器 | Hugging Face OAuth（`huggingface.co`）、Exa OAuth（`auth.exa.ai`） |
+| 已验证流程 | 动态客户端注册、授权码 + PKCE（S256）、授权码换令牌、refresh_token 换令牌、写入后的 MCP `initialize` 握手 |
+
+已针对 Hugging Face 授权服务器与 Hugging Face Inference Endpoints MCP 服务器端到端验证。
+
+## 已知限制
+
+- 只能管理已经在 MCP 配置里的服务器，或通过页面新增的服务器；不会自己发现服务器。
+- 需要凭证但没声明 OAuth 的服务器无法从页面登录，只能手工配置请求头。
+- 探测只验证握手。服务端可能接受未认证的 `initialize`，却在调用工具时才要令牌。
+- 续期定时器只在 Mini App 运行时工作。App 停掉期间过期的令牌，会在下一次启动时补刷。
+
+## 许可证
+
+Apache-2.0，见 [LICENSE](LICENSE)。
