@@ -412,16 +412,19 @@ function pickAuthMethod(metadata) {
   return 'client_secret_post';
 }
 
-async function registerClient(metadata, { redirectUri, scope }) {
+async function registerClient(metadata, { redirectUri, scope, grantTypes }) {
   const endpoint = metadata?.registration_endpoint;
   if (!endpoint) throw serviceError('dynamic_registration_unsupported');
   const supported = Array.isArray(metadata.grant_types_supported) ? metadata.grant_types_supported : [];
-  const grantTypes = ['authorization_code'];
-  if (supported.includes('refresh_token') || supported.length === 0) grantTypes.push('refresh_token');
+  const requested = grantTypes ?? (() => {
+    const list = ['authorization_code'];
+    if (supported.includes('refresh_token') || supported.length === 0) list.push('refresh_token');
+    return list;
+  })();
   const body = {
     client_name: CLIENT_NAME,
     redirect_uris: [redirectUri],
-    grant_types: grantTypes,
+    grant_types: requested,
     response_types: ['code'],
     token_endpoint_auth_method: pickAuthMethod(metadata),
   };
@@ -498,7 +501,7 @@ export async function probeMcpEndpoint(url, token, transport) {
 /* Service                                                             */
 /* ------------------------------------------------------------------ */
 
-export function createOAuthService({ dataDir, baseUrl, logger }) {
+export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   const mcpConfigPath = resolveMcpConfigPath(dataDir);
   // Durable state belongs in the Host-owned dataDir. A credential directory
   // left next to mcp.json by an earlier version is read once and imported;
@@ -513,6 +516,8 @@ export function createOAuthService({ dataDir, baseUrl, logger }) {
   const discoveryCache = new Map();
   /** serverName -> pending grant awaiting user confirmation */
   const awaitingConfirmation = new Map();
+  /** serverName -> device authorization session (RFC 8628) */
+  const deviceSessions = new Map();
 
   const children = new Set();
 
@@ -1069,7 +1074,175 @@ export function createOAuthService({ dataDir, baseUrl, logger }) {
     return results;
   }
 
+  /**
+   * RFC 8628 device authorization. There is no redirect, so the Host's port
+   * guard cannot block anything: the user types a short code in the provider's
+   * page and the server polls the token endpoint until the grant lands.
+   */
+  async function startDeviceAuthorization({ serverName, url, scope }) {
+    const { servers } = await listConfiguredServers();
+    const existing = servers.find((item) => item.name === serverName);
+    const targetUrl = existing?.url || url;
+    if (!targetUrl) throw serviceError('target_url_required');
+    assertTargetUrl(targetUrl);
+    const transport = existing?.type === 'sse' ? 'sse' : 'streamable-http';
+    const discovery = await probeDiscovery(serverName, targetUrl, transport);
+    const metadata = discovery.metadata;
+    if (!metadata?.device_authorization_endpoint) throw serviceError('device_flow_unsupported');
+    // The client must be allowed to use the device grant, or the authorization
+    // server rejects the device request.
+    const client = await registerClient(metadata, {
+      redirectUri: `${baseUrl}${CALLBACK_PATH}`,
+      scope,
+      grantTypes: [
+        'urn:ietf:params:oauth:grant-type:device_code',
+        'authorization_code',
+        'refresh_token',
+      ],
+    });
+    const form = new URLSearchParams();
+    form.set('client_id', client.client_id);
+    if (scope) form.set('scope', scope);
+    // The device endpoint authenticates the client like the token endpoint:
+    // a secret in the body, or a Basic header. Without it the server answers
+    // 400 invalid_client.
+    const deviceHeaders = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' };
+    const authMethod = client.token_endpoint_auth_method ?? pickAuthMethod(metadata);
+    if (client.client_secret && authMethod === 'client_secret_post') {
+      form.set('client_secret', client.client_secret);
+    }
+    if (client.client_secret && authMethod === 'client_secret_basic') {
+      deviceHeaders.authorization = `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString('base64')}`;
+    }
+    const response = await httpJson(metadata.device_authorization_endpoint, {
+      method: 'POST',
+      headers: deviceHeaders,
+      body: form.toString(),
+    });
+    if (!response.ok || !response.json?.device_code) {
+      log('warn', `oauth.device_request_failed server=${serverName} status=${response.status} body=${String(response.text).slice(0, 200)}`);
+      throw serviceError(`device_authorization_failed_${response.status}`);
+    }
+    const info = response.json;
+    const session = {
+      serverName,
+      url: targetUrl,
+      metadata,
+      client: {
+        client_id: client.client_id,
+        client_secret: client.client_secret ?? null,
+        auth_method: client.token_endpoint_auth_method ?? pickAuthMethod(metadata),
+      },
+      deviceCode: info.device_code,
+      scope: scope ?? null,
+      interval: Math.max(2, Number(info.interval) || 5),
+      expiresAt: Date.now() + (Number(info.expires_in) || 600) * 1000,
+      status: 'pending',
+      error: null,
+      timer: null,
+    };
+    deviceSessions.get(serverName)?.timer && clearTimeout(deviceSessions.get(serverName).timer);
+    deviceSessions.set(serverName, session);
+    startDevicePolling(session);
+    log('info', `oauth.device_started server=${serverName} interval=${session.interval}`);
+    return {
+      userCode: info.user_code,
+      verificationUri: info.verification_uri,
+      verificationUriComplete: info.verification_uri_complete ?? null,
+      expiresIn: Number(info.expires_in) || 600,
+      interval: session.interval,
+    };
+  }
+
+  function startDevicePolling(session) {
+    const schedule = () => {
+      session.timer = setTimeout(async () => {
+        if (deviceSessions.get(session.serverName) !== session) return;
+        await pollDeviceOnce(session);
+        if (deviceSessions.get(session.serverName) === session) schedule();
+      }, session.interval * 1000);
+      session.timer.unref?.();
+    };
+    schedule();
+  }
+
+  async function pollDeviceOnce(session) {
+    if (Date.now() > session.expiresAt) {
+      deviceSessions.delete(session.serverName);
+      session.status = 'expired';
+      session.error = 'expired_token';
+      log('warn', `oauth.device_expired server=${session.serverName}`);
+      onChange?.();
+      return;
+    }
+    const form = new URLSearchParams();
+    form.set('grant_type', 'urn:ietf:params:oauth:grant-type:device_code');
+    form.set('device_code', session.deviceCode);
+    form.set('client_id', session.client.client_id);
+    const headers = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' };
+    if (session.client.client_secret && session.client.auth_method === 'client_secret_post') {
+      form.set('client_secret', session.client.client_secret);
+    }
+    if (session.client.client_secret && session.client.auth_method === 'client_secret_basic') {
+      headers.authorization = `Basic ${Buffer.from(`${session.client.client_id}:${session.client.client_secret}`).toString('base64')}`;
+    }
+    let body = null;
+    try {
+      const response = await httpJson(session.metadata.token_endpoint, { method: 'POST', headers, body: form.toString() });
+      body = response.json ?? {};
+      if (response.ok && body.access_token) {
+        deviceSessions.delete(session.serverName);
+        session.status = 'granted';
+        awaitingConfirmation.set(session.serverName, {
+          serverName: session.serverName,
+          url: session.url,
+          token: body,
+          client: session.client,
+          scope: session.scope,
+          createdAt: Date.now(),
+        });
+        log('info', `oauth.device_authorized server=${session.serverName}`);
+        onChange?.();
+        return;
+      }
+    } catch (error) {
+      // A transient network failure must not abort the grant: keep polling.
+      session.status = 'pending';
+      return;
+    }
+    const error = body.error ?? 'authorization_pending';
+    if (error === 'authorization_pending') {
+      session.status = 'pending';
+      return;
+    }
+    if (error === 'slow_down') {
+      session.interval += 5;
+      session.status = 'pending';
+      return;
+    }
+    deviceSessions.delete(session.serverName);
+    session.status = 'failed';
+    session.error = error;
+    log('warn', `oauth.device_failed server=${session.serverName} reason=${error}`);
+    onChange?.();
+  }
+
+  function deviceStatus(serverName) {
+    const session = deviceSessions.get(serverName);
+    if (!session) return { status: 'idle' };
+    return {
+      status: session.status,
+      error: session.error ?? null,
+      expiresAt: session.expiresAt,
+      interval: session.interval,
+    };
+  }
+
   function dispose() {
+    for (const session of deviceSessions.values()) {
+      if (session.timer) clearTimeout(session.timer);
+    }
+    deviceSessions.clear();
     for (const child of children) {
       try {
         child.kill();
@@ -1094,6 +1267,8 @@ export function createOAuthService({ dataDir, baseUrl, logger }) {
     handleCallback,
     applyGrant,
     writeAuthorization: patchMcpAuthorization,
+    startDeviceAuthorization,
+    deviceStatus,
     refreshServer,
     refreshExpiring,
     dispose,

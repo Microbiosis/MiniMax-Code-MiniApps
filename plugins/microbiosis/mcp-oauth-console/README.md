@@ -21,10 +21,18 @@ The page lists every MCP server in the MiniMax Code configuration and shows **tw
 | Action | What it does |
 |---|---|
 | Detect | Re-probes the endpoint with a handshake that matches the declared transport, and shows the result in that server's own row |
-| Authorize | Runs the authorization-code + PKCE flow: dynamic client registration, browser consent, callback, then a confirmation dialog showing exactly which field will change |
+| Authorize | Runs an OAuth sign-in for that server, then a confirmation dialog showing exactly which field will change |
 | Confirm write | Patches `mcpServers.<name>.headers.Authorization` in `mcp.json`, backs the file up first, then verifies the token with a real MCP handshake |
 | Refresh | Exchanges the stored refresh token for a new access token and writes it back |
 | Refresh expiring | Refreshes every stored token that is within 30 minutes of expiry |
+
+## Signing in
+
+Two methods are offered, and the page recommends the first one.
+
+**Device code (recommended).** The server asks the authorization server for a short user code, the page shows it next to a link to the provider's verification page, and the server polls the token endpoint until you approve. There is no redirect, so nothing depends on the browser reaching this Mini App.
+
+**Authorization code + PKCE.** The browser opens the consent page and the provider redirects back to this Mini App's loopback port. **From MiniMax Code 3.1.2 the Host authenticates every request to that port**, so the callback page answers `401` and your handler never runs. The address bar still carries the authorization code, so copy that whole URL back into the page and the flow completes — the callback page itself is never needed.
 
 ## How detection works
 
@@ -90,6 +98,10 @@ Arguments are passed as an argv array and never through a shell. The URL is the 
 
 All durable state lives under `context.dataDir`, the private directory the Host creates for this plugin. Nothing is written outside it except the MCP configuration listed above.
 
+### Agent turns
+
+None. The package declares no `agentAccess`, so it never asks the Agent to run a turn, read a file, or call a tool. Everything happens inside the Node process or in the provider's own page.
+
 ### Credentials
 
 Token material stays in the Node process. The page receives metadata only: scope, expiry, and an eight-character SHA-256 fingerprint used to tell two tokens apart. A fingerprint is not reversible and is not usable as a credential. Credentials are never placed in HTML, client JavaScript, log messages, or error responses.
@@ -101,7 +113,7 @@ Token material stays in the Node process. The page receives metadata only: scope
 | MiniMax Code | 3.1.6 (Windows) |
 | Platform | Windows 11, Node 22 or newer |
 | Authorization servers | Hugging Face OAuth (`huggingface.co`), Exa OAuth (`auth.exa.ai`) |
-| Verified flows | Dynamic client registration, authorization code + PKCE (S256), authorization code exchange, refresh token exchange, MCP `initialize` handshake after a write |
+| Verified flows | Dynamic client registration, device authorization (RFC 8628), authorization code + PKCE (S256), authorization code exchange, refresh token exchange, MCP `initialize` handshake after a write |
 
 Verified end to end against the Hugging Face authorization server and the Hugging Face Inference Endpoints MCP server.
 
@@ -109,6 +121,7 @@ Verified end to end against the Hugging Face authorization server and the Huggin
 
 - The plugin can only manage servers that are already in the MCP configuration, or that you add through the page. It does not discover servers on its own.
 - A server that needs a credential but does not declare OAuth cannot be signed in to from the page; the header has to be set by hand.
+- The PKCE method needs the callback URL copied back by hand, because the Host guards the loopback port. Use the device code method unless the provider offers nothing else.
 - The detection probe checks the handshake. A server may accept an unauthenticated `initialize` and still require a token for tool calls.
 - The refresh timer runs while the Mini App is running. A token that expires while the app is stopped is refreshed the next time it starts.
 

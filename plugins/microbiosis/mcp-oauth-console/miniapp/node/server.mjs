@@ -37,11 +37,6 @@ const CONTENT_TYPES = {
 export async function start(context) {
   const clientDir = join(context.pluginRoot, 'miniapp', 'client');
   const baseUrl = `http://127.0.0.1:${context.listen.port}`;
-  const service = createOAuthService({
-    dataDir: context.dataDir,
-    baseUrl,
-    logger: context.logger,
-  });
 
   /** @type {Set<import('node:http').ServerResponse>} */
   const listeners = new Set();
@@ -56,6 +51,13 @@ export async function start(context) {
       }
     }
   };
+
+  const service = createOAuthService({
+    dataDir: context.dataDir,
+    baseUrl,
+    logger: context.logger,
+    onChange: () => broadcast('state', { reason: 'service' }),
+  });
 
   const sendJson = (response, status, body) => {
     const text = JSON.stringify(body);
@@ -212,6 +214,27 @@ export async function start(context) {
         scope: body.scope ? String(body.scope) : undefined,
       });
       sendJson(response, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/api/device/start') {
+      const body = await readBody(request);
+      if (!body) {
+        fail(response, 'invalid_json');
+        return;
+      }
+      const result = await service.startDeviceAuthorization({
+        serverName: String(body.serverName ?? ''),
+        url: body.url ? String(body.url) : undefined,
+        scope: body.scope ? String(body.scope) : undefined,
+      });
+      sendJson(response, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/api/device/status') {
+      const serverName = url.searchParams.get('serverName') ?? '';
+      sendJson(response, 200, { ok: true, ...service.deviceStatus(serverName) });
       return;
     }
 

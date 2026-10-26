@@ -316,6 +316,10 @@ function createServerRow(server) {
   });
 
   actions.append(btnApply, btnRefresh, btnAuthorize, btnDetect);
+  btnApply.dataset.action = 'apply';
+  btnRefresh.dataset.action = 'refresh';
+  btnAuthorize.dataset.action = 'authorize';
+  btnDetect.dataset.action = 'detect';
   node.append(main, actions);
 
   return { node, badgeSlot, credBadgeSlot, urlNode, metaNode, btnApply, btnRefresh, btnAuthorize, btnDetect };
@@ -498,127 +502,304 @@ function openAuthorizeModal(server) {
     serverName: server?.name ?? '',
     url: server?.url ?? '',
     scope: '',
+    method: 'device',
     session: null,
+    device: null,
+    deviceStatus: 'idle',
+    lastStatus: '',
     error: null,
     working: false,
+    pollTimer: null,
   };
   openModal({
     title: server?.hasAuthorization ? `重新授权 · ${server.name}` : '授权登录',
     build: (body) => renderAuthorizeBody(body, draft),
     footer: [
-      { label: '取消', className: 'btn btn--secondary', onClick: closeModal },
-      { label: '开始授权', className: 'btn btn--primary', onClick: () => startAuthorization(draft) },
+      {
+        label: '取消',
+        className: 'btn btn--secondary',
+        onClick: () => {
+          stopPolling(draft);
+          closeModal();
+        },
+      },
+      {
+        label: '开始授权',
+        className: 'btn btn--primary',
+        onClick: () => (draft.method === 'device' ? startDeviceFlow(draft) : startAuthorization(draft)),
+      },
     ],
   });
 }
 
 function renderAuthorizeBody(body, draft) {
-  const steps = element('ol', 'steps');
-  const items = [
-    { key: 'discover', text: '读取授权服务器元数据' },
-    { key: 'register', text: '动态注册客户端' },
-    { key: 'browser', text: '在浏览器中完成授权' },
-    { key: 'callback', text: '接收回调并换取令牌' },
-    { key: 'apply', text: '确认写入 mcp.json' },
-  ];
-  const reached = draft.session ? 3 : 0;
-  for (const [index, item] of items.entries()) {
-    const li = element('li', null, item.text);
-    if (index < reached) li.dataset.state = 'done';
-    else if (index === reached) li.dataset.state = 'active';
-    steps.append(li);
+  const switcher = element('div', 'segmented');
+  for (const [value, label, hint] of [
+    ['device', '设备码（推荐）', '无需回调，最省事'],
+    ['pkce', '授权码 + PKCE', '需手动回填一次'],
+  ]) {
+    const button = element('button', `segmented__item${draft.method === value ? ' is-active' : ''}`, label);
+    button.type = 'button';
+    button.setAttribute('aria-pressed', draft.method === value ? 'true' : 'false');
+    button.title = hint;
+    button.addEventListener('click', () => {
+      if (draft.method === value) return;
+      draft.method = value;
+      draft.error = null;
+      renderModal(true);
+    });
+    switcher.append(button);
   }
-  body.append(steps);
+  body.append(switcher);
 
-  if (!draft.session) {
-    const nameInput = element('input');
-    nameInput.type = 'text';
-    nameInput.value = draft.serverName;
-    nameInput.placeholder = 'hf-endpoints';
-    nameInput.addEventListener('input', () => {
-      draft.serverName = nameInput.value;
-    });
-    body.append(
-      field('服务器名称（写入 mcp.json 的键名）', nameInput, '名称已存在时覆盖该条目的 Authorization 头，否则新建条目。'),
-    );
-
-    const urlInput = element('input');
-    urlInput.type = 'url';
-    urlInput.value = draft.url;
-    urlInput.placeholder = 'https://endpoints.huggingface.co/mcp';
-    urlInput.addEventListener('input', () => {
-      draft.url = urlInput.value;
-    });
-    body.append(field('MCP 地址', urlInput, '受 OAuth 保护的 MCP 服务端点。'));
-
-    const scopeInput = element('input');
-    scopeInput.type = 'text';
-    scopeInput.value = draft.scope;
-    scopeInput.placeholder = 'read-endpoints write-endpoints';
-    scopeInput.addEventListener('input', () => {
-      draft.scope = scopeInput.value;
-    });
-    body.append(field('scope（可选，留空则用授权服务器默认值）', scopeInput));
+  if (draft.method === 'device') {
+    renderDeviceBody(body, draft);
   } else {
-    const notice = element('div', 'notice');
-    notice.append(
-      element('p', null, '浏览器已打开授权页。如果未能自动跳转，请复制下面的链接在新标签打开：'),
-    );
-    const link = element('a', 'btn btn--link', draft.session.authorizationUrl);
-    link.href = draft.session.authorizationUrl;
-    link.target = '_blank';
-    link.rel = 'noreferrer';
-    notice.append(link);
-    body.append(notice);
-
-    const copyRow = element('div', 'server__actions');
-    copyRow.append(
-      actionButton('复制授权链接', 'btn btn--secondary', async () => {
-        await copyText(draft.session.authorizationUrl);
-        toast(`${draft.serverName} 授权链接已复制`);
-      }),
-    );
-    body.append(copyRow);
-
-    const callbackInput = element('textarea');
-    callbackInput.placeholder = 'https://127.0.0.1:PORT/oauth/callback?code=...&state=...';
-    body.append(
-      field(
-        '回退：粘贴浏览器跳转后的完整地址',
-        callbackInput,
-        '如果回调页被浏览器拦截，把地址栏里的完整 URL 粘贴到这里再点「用回填完成」。',
-      ),
-    );
-
-    const manualRow = element('div', 'server__actions');
-    manualRow.append(
-      actionButton('用回填完成', 'btn btn--primary', async () => {
-        const value = callbackInput.value.trim();
-        if (!value) {
-          toast('请先粘贴回调地址', 'error');
-          return;
-        }
-        draft.working = true;
-        try {
-          await api('/api/authorize/complete', {
-            method: 'POST',
-            body: { sessionId: draft.session.sessionId, redirectUrl: value },
-          });
-          toast(`${draft.serverName} 已获取令牌，请在列表中确认写入`);
-          closeModal();
-          await loadState();
-        } catch (error) {
-          toast(`${draft.serverName} 完成授权失败：${error.message}`, 'error');
-        } finally {
-          draft.working = false;
-        }
-      }),
-    );
-    body.append(manualRow);
+    renderPkceBody(body, draft);
   }
 
   if (draft.error) {
     body.append(element('div', 'notice notice--danger', draft.error));
+  }
+}
+
+function renderDeviceBody(body, draft) {
+  if (!draft.device) {
+    const steps = element('ol', 'steps');
+    for (const text of ['读取授权服务器元数据', '申请设备码', '在授权页输入设备码', '换取令牌', '确认写入 mcp.json']) {
+      steps.append(element('li', null, text));
+    }
+    body.append(steps);
+    body.append(
+      element(
+        'div',
+        'notice',
+        '设备码流程不需要浏览器回调，因此不会被宿主对回环端口的鉴权拦住。页面会给你一串设备码，在授权页输入即可。',
+      ),
+    );
+    body.append(serverFields(draft));
+    return;
+  }
+
+  const code = element('div', 'device-code');
+  code.append(element('span', 'device-code__label', '设备码'), element('strong', 'device-code__value', draft.device.userCode));
+  body.append(code);
+
+  const link = draft.device.verificationUriComplete || draft.device.verificationUri;
+  const notice = element('div', 'notice');
+  notice.append(element('p', null, '在授权页输入上面的设备码，页面会自动继续：'));
+  const anchor = element('a', 'btn btn--link', link);
+  anchor.href = link;
+  anchor.target = '_blank';
+  anchor.rel = 'noreferrer';
+  notice.append(anchor);
+  body.append(notice);
+
+  const actions = element('div', 'server__actions');
+  actions.append(
+    actionButton('打开授权页', 'btn btn--secondary', () => {
+      window.open(link, '_blank', 'noopener');
+    }),
+    actionButton('复制设备码', 'btn btn--secondary', async () => {
+      await copyText(draft.device.userCode);
+      toast('设备码已复制');
+    }),
+  );
+  body.append(actions);
+
+  const statusText =
+    draft.deviceStatus === 'pending'
+      ? '等待你在授权页确认…'
+      : draft.deviceStatus === 'granted'
+        ? '已获得令牌，正在确认写入…'
+        : draft.deviceStatus === 'expired'
+          ? '设备码已过期，请重新申请'
+          : draft.deviceStatus === 'failed'
+            ? '授权失败，请重新申请'
+            : '准备中…';
+  body.append(element('p', 'field__hint', `状态：${statusText}`));
+}
+
+function serverFields(draft) {
+  const wrap = element('div', 'field-stack');
+
+  const nameInput = element('input');
+  nameInput.type = 'text';
+  nameInput.value = draft.serverName;
+  nameInput.placeholder = 'hf-endpoints';
+  nameInput.addEventListener('input', () => {
+    draft.serverName = nameInput.value;
+  });
+  wrap.append(field('服务器名称（写入 mcp.json 的键名）', nameInput, '名称已存在时覆盖该条目的 Authorization 头，否则新建条目。'));
+
+  const urlInput = element('input');
+  urlInput.type = 'url';
+  urlInput.value = draft.url;
+  urlInput.placeholder = 'https://endpoints.huggingface.co/mcp';
+  urlInput.addEventListener('input', () => {
+    draft.url = urlInput.value;
+  });
+  wrap.append(field('MCP 地址', urlInput, '受 OAuth 保护的 MCP 服务端点。'));
+
+  const scopeInput = element('input');
+  scopeInput.type = 'text';
+  scopeInput.value = draft.scope;
+  scopeInput.placeholder = 'read-endpoints write-endpoints';
+  scopeInput.addEventListener('input', () => {
+    draft.scope = scopeInput.value;
+  });
+  wrap.append(field('scope（可选，留空则用授权服务器默认值）', scopeInput));
+  return wrap;
+}
+
+function renderPkceBody(body, draft) {
+  const steps = element('ol', 'steps');
+  const items = ['读取授权服务器元数据', '动态注册客户端', '在浏览器中完成授权', '回填回调地址', '确认写入 mcp.json'];
+  const reached = draft.session ? 3 : 0;
+  items.forEach((text, index) => {
+    const li = element('li', null, text);
+    if (index < reached) li.dataset.state = 'done';
+    else if (index === reached) li.dataset.state = 'active';
+    steps.append(li);
+  });
+  body.append(steps);
+
+  if (!draft.session) {
+    body.append(
+      element(
+        'div',
+        'notice',
+        '浏览器会跳回本机端口，但宿主对回环端口有鉴权，那个页面会显示 401。地址栏里仍然带着授权码，把它复制回来即可。',
+      ),
+    );
+    body.append(serverFields(draft));
+    return;
+  }
+
+  const notice = element('div', 'notice');
+  notice.append(element('p', null, '浏览器已打开授权页。如果未能自动跳转，请复制下面的链接在新标签打开：'));
+  const link = element('a', 'btn btn--link', draft.session.authorizationUrl);
+  link.href = draft.session.authorizationUrl;
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  notice.append(link);
+  body.append(notice);
+
+  const copyRow = element('div', 'server__actions');
+  copyRow.append(
+    actionButton('复制授权链接', 'btn btn--secondary', async () => {
+      await copyText(draft.session.authorizationUrl);
+      toast(`${draft.serverName} 授权链接已复制`);
+    }),
+  );
+  body.append(copyRow);
+
+  const callbackInput = element('textarea');
+  callbackInput.placeholder = 'http://127.0.0.1:PORT/oauth/callback?code=...&state=...';
+  body.append(
+    field(
+      '回填：粘贴浏览器地址栏里的完整 URL',
+      callbackInput,
+      '授权完成后浏览器地址栏会是一段带 code 的地址，整段复制过来即可，无需回填页真的打开。',
+    ),
+  );
+
+  const manualRow = element('div', 'server__actions');
+  manualRow.append(
+    actionButton('用回填完成', 'btn btn--primary', async () => {
+      const value = callbackInput.value.trim();
+      if (!value) {
+        toast('请先粘贴回调地址', 'error');
+        return;
+      }
+      draft.working = true;
+      try {
+        await api('/api/authorize/complete', {
+          method: 'POST',
+          body: { sessionId: draft.session.sessionId, redirectUrl: value },
+        });
+        toast(`${draft.serverName} 已获取令牌，请在列表中确认写入`);
+        closeModal();
+        await loadState();
+      } catch (error) {
+        toast(`${draft.serverName} 完成授权失败：${error.message}`, 'error');
+      } finally {
+        draft.working = false;
+      }
+    }),
+  );
+  body.append(manualRow);
+}
+
+function startDeviceFlow(draft) {
+  if (!draft.serverName.trim()) {
+    toast('请填写服务器名称', 'error');
+    return;
+  }
+  if (!draft.url.trim()) {
+    toast('请填写 MCP 地址', 'error');
+    return;
+  }
+  draft.working = true;
+  draft.error = null;
+  renderModal(true);
+  api('/api/device/start', {
+    method: 'POST',
+    body: {
+      serverName: draft.serverName.trim(),
+      url: draft.url.trim(),
+      scope: draft.scope.trim() || undefined,
+    },
+  })
+    .then((result) => {
+      draft.device = result;
+      draft.deviceStatus = 'pending';
+      draft.lastStatus = 'pending';
+      renderModal(true);
+      pollDeviceStatus(draft);
+    })
+    .catch((error) => {
+      draft.error = `发起设备码失败：${error.message}`;
+      renderModal(true);
+    })
+    .finally(() => {
+      draft.working = false;
+    });
+}
+
+function pollDeviceStatus(draft) {
+  stopPolling(draft);
+  draft.pollTimer = setInterval(async () => {
+    let result = null;
+    try {
+      result = await api(`/api/device/status?serverName=${encodeURIComponent(draft.serverName.trim())}`);
+    } catch {
+      return; // transient: keep polling
+    }
+    if (result.status !== draft.lastStatus) {
+      draft.lastStatus = result.status;
+      draft.deviceStatus = result.status;
+      renderModal(true);
+    }
+    if (result.status === 'granted') {
+      stopPolling(draft);
+      toast(`${draft.serverName} 已获取令牌，请在列表中确认写入`);
+      closeModal();
+      void loadState();
+      return;
+    }
+    if (result.status === 'failed' || result.status === 'expired') {
+      stopPolling(draft);
+      draft.error = `设备码授权${result.status === 'expired' ? '已过期' : '失败'}${result.error ? `（${result.error}）` : ''}`;
+      renderModal(true);
+    }
+  }, 3000);
+}
+
+function stopPolling(draft) {
+  if (draft.pollTimer) {
+    clearInterval(draft.pollTimer);
+    draft.pollTimer = null;
   }
 }
 
