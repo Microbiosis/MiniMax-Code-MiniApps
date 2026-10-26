@@ -113,6 +113,8 @@ Every URL is validated before the process requests it:
 - loopback, RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), carrier-grade NAT (`100.64/10`), link-local (`169.254/16`), IPv6 unique-local (`fc00::/7`), IPv6 link-local (`fe80::/10`), IPv6 multicast, the unspecified address, and the instance-metadata hosts are refused;
 - IPv4-mapped, IPv4-compatible and NAT64 IPv6 forms are resolved back to their IPv4 address first, so `::ffff:127.0.0.1` and `::ffff:7f00:1` are refused as well.
 
+Redirects are followed by hand, and **every hop is checked again with the same rule** — a `302` must not be a way around the guard. At most five hops are followed.
+
 Two tiers exist. A URL that a **remote server** handed back — a metadata document, a token endpoint, a device endpoint — is always checked strictly and can never reach a private address. A URL the **user** configured as their own MCP endpoint may point at a private address, but only when the "Allow private addresses" switch is on.
 
 ### Spawned processes

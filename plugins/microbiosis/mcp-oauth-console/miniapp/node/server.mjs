@@ -99,7 +99,9 @@ export async function start(context) {
       // Only the keys of `fields` leave the process, so the reason goes in the
       // message itself.
       context.logger.error(`miniapp.request.failed reason=${code}`);
-      if (!response.headersSent) fail(response, code);
+      // An unregistered code is an internal detail: the page gets the generic
+      // one, never the raw reason.
+      if (!response.headersSent) fail(response, isKnownServiceError(code) ? code : 'internal_error');
       else response.end();
     });
   });

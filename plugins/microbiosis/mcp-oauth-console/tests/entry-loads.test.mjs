@@ -27,3 +27,20 @@ test('every code the service throws is registered in the catalog', async () => {
   const unknown = [...new Set(used)].filter((code) => !isKnownServiceError(code));
   assert.deepEqual(unknown, [], `unregistered error codes: ${unknown.join(', ')}`);
 });
+
+test('no node file throws a raw code that would reach the page', async () => {
+  const { readFile, readdir } = await import('node:fs/promises');
+  const dir = new URL('../miniapp/node/', import.meta.url);
+  const names = await readdir(dir);
+  const raw = [];
+  for (const name of names) {
+    if (!name.endsWith('.mjs')) continue;
+    const source = await readFile(new URL(name, dir), 'utf8');
+    // A raw `throw new Error('some_code')` bypasses the catalog, so the code
+    // would be handed to the page as-is.
+    for (const match of source.matchAll(/throw new Error\(\s*'([a-z0-9_]+)'/g)) {
+      raw.push(`${name}: ${match[1]}`);
+    }
+  }
+  assert.deepEqual(raw, [], `raw error codes must go through the catalog: ${raw.join(', ')}`);
+});

@@ -29,6 +29,8 @@ const REFRESH_WINDOW_MS = 30 * 60 * 1000;
 const DISCOVERY_TTL_MS = 10 * 60 * 1000;
 const FAILED_DISCOVERY_TTL_MS = 60 * 1000;
 const PROBE_TIMEOUT_MS = 20_000;
+/** How many redirect hops a request may take before it is refused. */
+const MAX_REDIRECT_HOPS = 5;
 
 /** Short, non-reversible label for a token. Lets the user compare old vs new. */
 export function fingerprint(value) {
@@ -64,7 +66,7 @@ function skipWhitespace(text, index) {
 }
 
 function readJsonString(text, index) {
-  if (text[index] !== '"') throw new Error('expected_string');
+  if (text[index] !== '"') throw serviceError('config_not_parseable');
   let i = index + 1;
   let value = '';
   while (i < text.length) {
@@ -85,7 +87,7 @@ function readJsonString(text, index) {
     value += ch;
     i += 1;
   }
-  throw new Error('unterminated_string');
+  throw serviceError('config_not_parseable');
 }
 
 function matchObjectSpan(text, start) {
@@ -104,7 +106,7 @@ function matchObjectSpan(text, start) {
     }
     i += 1;
   }
-  throw new Error('unterminated_object');
+  throw serviceError('config_not_parseable');
 }
 
 function findMemberObjectSpan(text, key, from = 0, to = text.length) {
@@ -259,17 +261,62 @@ function delay(ms) {
 }
 
 /**
+ * Resolves a redirect target and checks it with the same rule as the URL the
+ * request started from.
+ */
+export function resolveRedirectTarget(current, location, guard) {
+  let next;
+  try {
+    next = new URL(location, current).toString();
+  } catch {
+    throw serviceError('redirect_invalid');
+  }
+  if (guard) guard(next);
+  return next;
+}
+
+/**
+ * Follows a redirect by hand and checks every hop again.
+ *
+ * `fetch` follows a redirect on its own, which would let a hostile server
+ * answer with a `302` pointing at the network around this machine and walk
+ * right past the URL guard. Each hop is therefore validated with the same
+ * rule as the first URL.
+ */
+async function fetchGuarded(url, init, signal, guard) {
+  if (guard) guard(url);
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop += 1) {
+    const response = await fetch(current, { ...init, redirect: 'manual', signal });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get('location');
+    try {
+      await response.body?.cancel();
+    } catch {
+      // the body was already closed
+    }
+    if (!location) return response;
+    if (hop === MAX_REDIRECT_HOPS) throw serviceError('too_many_redirects');
+    current = resolveRedirectTarget(current, location, guard);
+  }
+  throw serviceError('too_many_redirects');
+}
+
+/**
  * HTTP helper with retry. The built-in fetch fails with a 10s connect timeout
  * on this network's proxied first connection, so transient connect failures are
  * retried instead of being reported as an empty or failed probe.
+ *
+ * `guard` is called for the first URL and for every redirect hop, so no
+ * request can leave the network the caller allowed.
  */
-async function httpJson(url, init, timeoutMs = PROBE_TIMEOUT_MS, attempts = 3, headersOnly = false) {
+async function httpJson(url, init, timeoutMs = PROBE_TIMEOUT_MS, attempts = 3, headersOnly = false, guard = null) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(url, { ...init, signal: controller.signal });
+      const response = await fetchGuarded(url, init, controller.signal, guard);
       if (headersOnly) {
         // The body of an SSE stream never ends, so it must not be read.
         try {
@@ -295,6 +342,14 @@ async function httpJson(url, init, timeoutMs = PROBE_TIMEOUT_MS, attempts = 3, h
     }
   }
   throw lastError instanceof Error ? lastError : new Error('request_failed');
+}
+
+/**
+ * Exported for the package tests: one request that checks the first URL and
+ * every redirect hop with the given guard.
+ */
+export async function guardedRequest(url, init, guard) {
+  return httpJson(url, init, PROBE_TIMEOUT_MS, 1, false, guard);
 }
 
 /**
@@ -473,6 +528,16 @@ export function assertMetadataUrl(url) {
   return parsed;
 }
 
+/** The hop guard for a URL that a remote server handed us. */
+const strictHop = (url) => {
+  assertMetadataUrl(url);
+};
+
+/** The hop guard for the MCP endpoint the user configured themselves. */
+const endpointHop = (allowPrivateNetwork) => (url) => {
+  assertTargetUrl(url, { allowPrivateNetwork });
+};
+
 /**
  * Detects what an MCP endpoint demands and resolves the authorization server
  * metadata via the RFC 9728 protected-resource document.
@@ -486,7 +551,14 @@ export async function discoverAuthorization(url, options = {}) {
   // The endpoint itself is the one the user configured, so a private address
   // is allowed only when they opted into that.
   assertTargetUrl(url, { allowPrivateNetwork: options.allowPrivateNetwork === true });
-  const probe = await httpJson(url, probeRequest(url, { transport }), PROBE_TIMEOUT_MS, 3, transport === 'sse');
+  const probe = await httpJson(
+    url,
+    probeRequest(url, { transport }),
+    PROBE_TIMEOUT_MS,
+    3,
+    transport === 'sse',
+    endpointHop(options.allowPrivateNetwork === true),
+  );
   if (probe.status !== 401) {
     // Only a 2xx proves the endpoint accepted an unauthenticated handshake.
     // 404 / 405 / 5xx say nothing about whether auth is required.
@@ -517,7 +589,14 @@ export async function discoverAuthorization(url, options = {}) {
       reason: bearer ? 'bearer_without_resource_metadata' : 'credential_required_unknown_scheme',
     };
   }
-  const resourceDoc = await httpJson(assertMetadataUrl(resourceMatch[1]).toString(), { headers: { accept: 'application/json' } });
+  const resourceDoc = await httpJson(
+    assertMetadataUrl(resourceMatch[1]).toString(),
+    { headers: { accept: 'application/json' } },
+    PROBE_TIMEOUT_MS,
+    3,
+    false,
+    strictHop,
+  );
   const issuers = Array.isArray(resourceDoc.json?.authorization_servers) ? resourceDoc.json.authorization_servers : [];
   const metadata = await loadAuthorizationServerMetadata(issuers);
   return {
@@ -539,7 +618,14 @@ async function loadAuthorizationServerMetadata(issuers) {
         // Every URL a remote server handed us is checked strictly: a hostile
         // server must not be able to point us at the network around this host.
         assertMetadataUrl(candidate);
-        const response = await httpJson(candidate, { headers: { accept: 'application/json' } });
+        const response = await httpJson(
+          candidate,
+          { headers: { accept: 'application/json' } },
+          PROBE_TIMEOUT_MS,
+          3,
+          false,
+          strictHop,
+        );
         if (response.ok && response.json?.token_endpoint) return response.json;
       } catch {
         // try the next well-known location
@@ -576,11 +662,18 @@ async function registerClient(metadata, { redirectUri, scope, grantTypes }) {
     token_endpoint_auth_method: pickAuthMethod(metadata),
   };
   if (scope) body.scope = scope;
-  const response = await httpJson(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const response = await httpJson(
+    endpoint,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    },
+    PROBE_TIMEOUT_MS,
+    3,
+    false,
+    strictHop,
+  );
   if (!response.ok || !response.json?.client_id) {
     throw serviceError(`dynamic_registration_failed_${response.status}`);
   }
@@ -590,6 +683,10 @@ async function registerClient(metadata, { redirectUri, scope, grantTypes }) {
 function buildAuthorizeUrl(metadata, { clientId, redirectUri, state, codeChallenge, scope }) {
   const endpoint = metadata?.authorization_endpoint;
   if (!endpoint) throw serviceError('authorization_endpoint_missing');
+  // The browser is about to be sent here, so the address is checked as well:
+  // a hostile server must not be able to point the consent page at the
+  // network around this machine.
+  assertMetadataUrl(endpoint);
   const url = new URL(endpoint);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('client_id', clientId);
@@ -619,11 +716,18 @@ async function requestToken(metadata, client, form) {
   if (client.client_secret && client.auth_method === 'client_secret_basic') {
     headers.authorization = `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString('base64')}`;
   }
-  const response = await httpJson(metadata.token_endpoint, {
-    method: 'POST',
-    headers,
-    body: form.toString(),
-  });
+  const response = await httpJson(
+    metadata.token_endpoint,
+    {
+      method: 'POST',
+      headers,
+      body: form.toString(),
+    },
+    PROBE_TIMEOUT_MS,
+    3,
+    false,
+    strictHop,
+  );
   if (!response.ok || !response.json?.access_token) {
     const code = response.json?.error || `http_${response.status}`;
     throw serviceError(`token_request_failed_${code}`);
@@ -635,10 +739,17 @@ async function requestToken(metadata, client, form) {
  * Verifies a token against the MCP endpoint with a handshake that matches the
  * declared transport.
  */
-export async function probeMcpEndpoint(url, token, transport) {
+export async function probeMcpEndpoint(url, token, transport, options = {}) {
   const isSse = transport === 'sse';
   try {
-    const response = await httpJson(url, probeRequest(url, { transport, token }), PROBE_TIMEOUT_MS, 3, isSse);
+    const response = await httpJson(
+      url,
+      probeRequest(url, { transport, token }),
+      PROBE_TIMEOUT_MS,
+      3,
+      isSse,
+      endpointHop(options.allowPrivateNetwork === true),
+    );
     return { status: response.status, ok: response.status === 200 || response.status === 204 };
   } catch (error) {
     return { status: 0, ok: false, error: error instanceof Error ? error.message : 'probe_failed' };
@@ -931,7 +1042,11 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     const existing = servers.find((item) => item.name === serverName);
     const targetUrl = existing?.url || url;
     if (!targetUrl) throw serviceError('target_url_required');
-    assertTargetUrl(targetUrl);
+    // The endpoint is the one the user configured, so a private address is
+    // allowed when they opted into that. The URLs the server hands back are
+    // checked strictly later on.
+    const { allowPrivateNetwork } = await loadSettings();
+    assertTargetUrl(targetUrl, { allowPrivateNetwork });
 
     const transport = existing?.type === 'sse' ? 'sse' : 'streamable-http';
     const discovery = await probeDiscovery(serverName, targetUrl, transport);
@@ -1123,7 +1238,8 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     awaitingConfirmation.delete(serverName);
     const { servers: configured } = await listConfiguredServers();
     const transport = configured.find((item) => item.name === serverName)?.type;
-    const probe = grant.url ? await probeMcpEndpoint(grant.url, token.access_token, transport) : null;
+    const { allowPrivateNetwork } = await loadSettings();
+    const probe = grant.url ? await probeMcpEndpoint(grant.url, token.access_token, transport, { allowPrivateNetwork }) : null;
     log('info', `oauth.grant_applied server=${serverName} probe=${probe?.status ?? 'n/a'}`);
     return {
       serverName,
@@ -1187,7 +1303,8 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     };
     await saveCredential(serverName, next);
     const patch = await patchMcpAuthorization(serverName, token.access_token, { url });
-    const probe = await probeMcpEndpoint(url, token.access_token, server?.type);
+    const { allowPrivateNetwork } = await loadSettings();
+    const probe = await probeMcpEndpoint(url, token.access_token, server?.type, { allowPrivateNetwork });
     log('info', `oauth.token_refreshed server=${serverName} probe=${probe.status}`);
     return {
       serverName,
@@ -1329,7 +1446,8 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     const existing = servers.find((item) => item.name === serverName);
     const targetUrl = existing?.url || url;
     if (!targetUrl) throw serviceError('target_url_required');
-    assertTargetUrl(targetUrl);
+    const { allowPrivateNetwork } = await loadSettings();
+    assertTargetUrl(targetUrl, { allowPrivateNetwork });
     const transport = existing?.type === 'sse' ? 'sse' : 'streamable-http';
     const discovery = await probeDiscovery(serverName, targetUrl, transport);
     const metadata = discovery.metadata;
@@ -1359,11 +1477,18 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     if (client.client_secret && authMethod === 'client_secret_basic') {
       deviceHeaders.authorization = `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString('base64')}`;
     }
-    const response = await httpJson(assertMetadataUrl(metadata.device_authorization_endpoint).toString(), {
-      method: 'POST',
-      headers: deviceHeaders,
-      body: form.toString(),
-    });
+    const response = await httpJson(
+      assertMetadataUrl(metadata.device_authorization_endpoint).toString(),
+      {
+        method: 'POST',
+        headers: deviceHeaders,
+        body: form.toString(),
+      },
+      PROBE_TIMEOUT_MS,
+      3,
+      false,
+      strictHop,
+    );
     if (!response.ok || !response.json?.device_code) {
       log('warn', `oauth.device_request_failed server=${serverName} status=${response.status} body=${String(response.text).slice(0, 200)}`);
       throw serviceError(`device_authorization_failed_${response.status}`);
@@ -1433,7 +1558,14 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     }
     let body = null;
     try {
-      const response = await httpJson(session.metadata.token_endpoint, { method: 'POST', headers, body: form.toString() });
+      const response = await httpJson(
+        session.metadata.token_endpoint,
+        { method: 'POST', headers, body: form.toString() },
+        PROBE_TIMEOUT_MS,
+        3,
+        false,
+        strictHop,
+      );
       body = response.json ?? {};
       if (response.ok && body.access_token) {
         deviceSessions.delete(session.serverName);
