@@ -3,7 +3,7 @@
   "name": "mcp-oauth-console",
   "displayName": "MCP OAuth 令牌台",
   "version": "1.0.0",
-  "description": "为受 OAuth 保护的 MCP 服务器完成授权码 + PKCE 登录，自动续期，并把令牌写回本地 mcp.json。",
+  "description": "为受 OAuth 保护的 MCP 服务器完成设备码或授权码 + PKCE 登录，可选择自动续期，并把令牌写回本地 mcp.json。",
   "author": "Microbiosis",
   "icon": "icon.png",
   "category": "Code",

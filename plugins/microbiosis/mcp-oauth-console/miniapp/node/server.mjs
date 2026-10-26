@@ -259,9 +259,27 @@ export async function start(context) {
         fail(response, 'invalid_json');
         return;
       }
-      const result = await service.applyGrant(String(body.serverName ?? ''));
+      const result = await service.applyGrant(String(body.serverName ?? ''), {
+        confirmToken: body.confirmToken ? String(body.confirmToken) : null,
+        expectedPath: body.expectedPath ? String(body.expectedPath) : null,
+      });
       broadcast('state', { reason: 'applied' });
       sendJson(response, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/api/settings') {
+      const body = await readBody(request);
+      if (!body) {
+        fail(response, 'invalid_json');
+        return;
+      }
+      const settings = await service.saveSettings({
+        autoRefresh: body.autoRefresh === true,
+        allowPrivateNetwork: body.allowPrivateNetwork === true,
+      });
+      broadcast('state', { reason: 'settings' });
+      sendJson(response, 200, { ok: true, settings });
       return;
     }
 
@@ -278,7 +296,9 @@ export async function start(context) {
     }
 
     if (method === 'POST' && pathname === '/api/refresh-all') {
-      const results = await service.refreshExpiring();
+      // The user pressed the button, so this one is confirmed even when the
+      // background timer is off.
+      const results = await service.refreshExpiring({ force: true });
       broadcast('state', { reason: 'refreshed' });
       sendJson(response, 200, { ok: true, results });
       return;
@@ -355,10 +375,22 @@ export async function start(context) {
   return { dispose };
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char]);
+}
+
 function renderCallbackPage(result) {
   const ok = result.ok;
-  const title = ok ? '授权完成' : '授权未完成';
-  const detail = result.message ?? '';
+  // The error text can come from a crafted callback URL, so it is escaped
+  // before it reaches the page.
+  const title = escapeHtml(ok ? '授权完成' : '授权未完成');
+  const detail = escapeHtml(result.message ?? '');
   const tone = ok ? 'var(--mcode-success)' : 'var(--mcode-danger)';
   return `<!doctype html>
 <html lang="zh-CN">

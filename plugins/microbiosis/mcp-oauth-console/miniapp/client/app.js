@@ -12,6 +12,9 @@ const els = {
   hint: document.getElementById('panel-hint'),
   modalRoot: document.getElementById('modal-root'),
   toastRoot: document.getElementById('toast-root'),
+  configPath: document.getElementById('config-path-hint'),
+  autoRefresh: document.getElementById('toggle-auto-refresh'),
+  allowPrivate: document.getElementById('toggle-private-network'),
   themeToggle: document.getElementById('theme-toggle'),
   refreshAll: document.getElementById('refresh-all'),
   addServer: document.getElementById('add-server'),
@@ -131,6 +134,13 @@ function renderKpis() {
   els.refreshable.textContent = String(summary.refreshable);
   els.expiring.textContent = String(summary.expiringSoon);
   els.expiring.className = summary.expiringSoon > 0 ? 'kpi__value kpi__value--warn' : 'kpi__value';
+
+  const settings = view.data.settings ?? {};
+  if (els.autoRefresh) els.autoRefresh.checked = settings.autoRefresh === true;
+  if (els.allowPrivate) els.allowPrivate.checked = settings.allowPrivateNetwork === true;
+  if (els.configPath) {
+    els.configPath.textContent = view.data.configPath ? `将写入的文件：${view.data.configPath}` : '未能定位 MCP 配置文件';
+  }
 }
 
 function renderServers() {
@@ -677,7 +687,15 @@ function renderPkceBody(body, draft) {
   }
 
   const notice = element('div', 'notice');
-  notice.append(element('p', null, '浏览器已打开授权页。如果未能自动跳转，请复制下面的链接在新标签打开：'));
+  notice.append(
+    element(
+      'p',
+      null,
+      draft.session.browserOpened
+        ? '浏览器已打开授权页。如果未能自动跳转，请复制下面的链接在新标签打开：'
+        : '没能自动打开浏览器，请复制下面的链接到浏览器打开：',
+    ),
+  );
   const link = element('a', 'btn btn--link', draft.session.authorizationUrl);
   link.href = draft.session.authorizationUrl;
   link.target = '_blank';
@@ -846,6 +864,7 @@ function openConfirmModal(serverName) {
       };
       add('目标服务器', server?.name ?? serverName);
       add('MCP 地址', server?.url ?? '—');
+      add('写入文件', view.data?.configPath ?? '—');
       add('写入字段', `mcpServers.${serverName}.headers.Authorization`);
       add('新令牌指纹', server?.pendingFingerprint ?? '—');
       add('当前指纹', server?.tokenFingerprint ?? '（尚未配置）');
@@ -855,7 +874,7 @@ function openConfirmModal(serverName) {
         element(
           'div',
           'notice notice--warn',
-          '这会修改本机 mcp.json 中该服务器的 Authorization 头，并在 mcp-credentials 下写入凭据文件。原文件会先备份为 mcp.json.bak。',
+          '这会修改上面列出的文件里该服务器的 Authorization 头，并在 dataDir 下写入凭据文件。写入前会先备份（备份失败则不写）。',
         ),
       );
     },
@@ -866,7 +885,14 @@ function openConfirmModal(serverName) {
         className: 'btn btn--danger',
         onClick: async () => {
           try {
-            const result = await api('/api/apply', { method: 'POST', body: { serverName } });
+            const result = await api('/api/apply', {
+              method: 'POST',
+              body: {
+                serverName,
+                confirmToken: server?.pendingConfirmToken ?? null,
+                expectedPath: view.data?.configPath ?? null,
+              },
+            });
             toast(
               `已写入 ${serverName}${result.probe ? ` · 握手状态 ${result.probe.status}` : ''}${result.created ? ' · 新建条目' : ''}`,
             );
@@ -970,6 +996,23 @@ els.refreshAll.addEventListener('click', async () => {
 });
 
 els.addServer.addEventListener('click', () => openAuthorizeModal(null));
+
+async function saveSettings(patch) {
+  try {
+    await api('/api/settings', { method: 'POST', body: patch });
+    await loadState();
+  } catch (error) {
+    toast(`保存设置失败：${error.message}`, 'error');
+  }
+}
+
+els.autoRefresh?.addEventListener('change', (event) => {
+  void saveSettings({ autoRefresh: event.target.checked });
+});
+
+els.allowPrivate?.addEventListener('change', (event) => {
+  void saveSettings({ allowPrivateNetwork: event.target.checked });
+});
 
 initTheme();
 render();

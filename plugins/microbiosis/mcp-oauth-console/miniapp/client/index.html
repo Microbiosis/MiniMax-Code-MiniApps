@@ -47,6 +47,25 @@
         </div>
       </section>
 
+      <section class="panel" aria-labelledby="settings-heading">
+        <div class="panel__head">
+          <h2 id="settings-heading">设置</h2>
+          <p class="panel__hint" id="config-path-hint">—</p>
+        </div>
+        <div class="settings">
+          <label class="switch">
+            <input type="checkbox" id="toggle-auto-refresh" />
+            <span>到期前自动续期</span>
+          </label>
+          <p class="field__hint">默认关闭。关闭时只有手动点「刷新令牌」才会写配置，Mini App 停止期间不会有任何写入。</p>
+          <label class="switch">
+            <input type="checkbox" id="toggle-private-network" />
+            <span>允许访问内网地址</span>
+          </label>
+          <p class="field__hint">默认拒绝私有网段、链路本地与实例元数据地址。局域网里的 MCP 服务器需要打开它。</p>
+        </div>
+      </section>
+
       <section class="panel" aria-labelledby="servers-heading">
         <div class="panel__head">
           <h2 id="servers-heading">服务器</h2>

@@ -14,9 +14,9 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 import { serviceError } from './errors.mjs';
 
@@ -29,7 +29,6 @@ const REFRESH_WINDOW_MS = 30 * 60 * 1000;
 const DISCOVERY_TTL_MS = 10 * 60 * 1000;
 const FAILED_DISCOVERY_TTL_MS = 60 * 1000;
 const PROBE_TIMEOUT_MS = 20_000;
-const GRANT_TTL_MS = 30 * 60 * 1000;
 
 /** Short, non-reversible label for a token. Lets the user compare old vs new. */
 export function fingerprint(value) {
@@ -125,6 +124,12 @@ function findMemberObjectSpan(text, key, from = 0, to = text.length) {
   return null;
 }
 
+function findRootObjectSpan(text) {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  return { start, end: matchObjectSpan(text, start) };
+}
+
 function findMemberStringSpan(text, key, from, to) {
   const needle = JSON.stringify(key);
   let index = text.indexOf(needle, from);
@@ -147,32 +152,61 @@ function findMemberStringSpan(text, key, from, to) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Locates the runtime `mcp.json`. The Host data dir normally lives inside the
- * MiniMax data dir, but the lookup walks up from several roots so a different
- * data-dir layout still resolves.
+ * Locates the runtime `mcp.json`.
+ *
+ * Only two sources are used: the Host's own data-dir chain (the plugin data
+ * dir lives inside the MiniMax data dir) and the documented default location.
+ * The process working directory and the Node executable's directory are
+ * deliberately not searched, so an unrelated `mcp.json` there can never win.
+ *
+ * The result is a candidate only. Before anything is written it is realpath'ed
+ * and shown in the page, and the write is bound to that exact path.
  */
-export function resolveMcpConfigPath(startDir) {
-  const override = process.env.MINIMAX_MCP_CONFIG;
-  if (override && existsSync(override)) return resolve(override);
-
-  const roots = [
-    startDir,
-    process.cwd(),
-    dirname(process.execPath),
-  ].filter(Boolean);
-
-  for (const root of roots) {
-    let dir = resolve(root);
-    for (let depth = 0; depth < 10; depth += 1) {
-      const candidate = join(dir, 'mcp.json');
-      if (existsSync(candidate)) return candidate;
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
+export function resolveMcpConfigPath(dataDir) {
+  let dir = resolve(dataDir);
+  for (let depth = 0; depth < 10; depth += 1) {
+    const candidate = join(dir, 'mcp.json');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
   }
-
   return join(homedir(), '.minimax', 'mcp.json');
+}
+
+/** The canonical path of the configuration file, with symlinks resolved. */
+export async function canonicalConfigPath(path) {
+  try {
+    return await realpath(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/**
+ * A server name becomes a file name, so it is restricted to a safe set. A
+ * name such as `../../other` must never be able to leave the credential
+ * directory.
+ */
+export function assertServerName(serverName) {
+  if (
+    typeof serverName !== 'string' ||
+    !/^[A-Za-z0-9._-]{1,64}$/.test(serverName) ||
+    serverName === '.' ||
+    serverName === '..'
+  ) {
+    throw serviceError('invalid_server_name');
+  }
+  return serverName;
+}
+
+/** The credential path for a server, proven to stay inside its directory. */
+export function credentialPath(serverName, dir) {
+  assertServerName(serverName);
+  const base = resolve(dir);
+  const path = resolve(join(base, `${serverName}.json`));
+  if (!path.startsWith(base + sep)) throw serviceError('invalid_server_name');
+  return path;
 }
 
 async function readConfigFile(path) {
@@ -188,14 +222,11 @@ async function writeJsonFile(path, value) {
 }
 
 async function backupConfig(path, backupPath) {
-  try {
-    const text = await readFile(path, 'utf8');
-    await mkdir(dirname(backupPath), { recursive: true });
-    await writeFileAtomic(backupPath, text);
-    return true;
-  } catch {
-    return false;
-  }
+  // A failed backup must abort the write: the backup is the only way back.
+  const text = await readFile(path, 'utf8');
+  await mkdir(dirname(backupPath), { recursive: true });
+  await writeFileAtomic(backupPath, text);
+  return true;
 }
 
 /**
@@ -308,12 +339,114 @@ function probeRequest(url, { transport, token }) {
   return buildInitializeRequest(token);
 }
 
+/** True for loopback, private, link-local, unique-local and metadata addresses. */
+export function isPrivateHost(hostname) {
+  const host = String(hostname).toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host === '::1' || host === '::') return true;
+  if (host === '169.254.169.254' || host === 'metadata.google.internal' || host.endsWith('.internal')) return true;
+
+  // IPv4, in any of the textual forms a URL may carry.
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const parts = ipv4.slice(1).map(Number);
+    if (parts.some((part) => part > 255)) return true;
+    const [a, b] = parts;
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+
+  if (host.includes(':')) return isPrivateIpv6(host);
+  return false;
+}
+
+/**
+ * Splits an IPv6 address into its eight groups. Both the dotted form
+ * (`::ffff:127.0.0.1`) and the hex form WHATWG URLs produce
+ * (`::ffff:7f00:1`) are accepted, because a URL parser rewrites the first one
+ * before the guard ever sees it.
+ */
+function parseIpv6Groups(text) {
+  if (!text) return [];
+  const groups = [];
+  for (const part of text.split(':')) {
+    if (part.includes('.')) {
+      const bytes = part.split('.');
+      if (bytes.length !== 4) return null;
+      const numbers = bytes.map((byte) => (/^\d{1,3}$/.test(byte) ? Number(byte) : NaN));
+      if (numbers.some((number) => !Number.isInteger(number) || number > 255)) return null;
+      groups.push((numbers[0] << 8) | numbers[1], (numbers[2] << 8) | numbers[3]);
+      continue;
+    }
+    if (!/^[0-9a-f]{1,4}$/.test(part)) return null;
+    groups.push(parseInt(part, 16));
+  }
+  return groups;
+}
+
+/** Expands an IPv6 address into its eight 16 bit groups, or null if malformed. */
+function expandIpv6(host) {
+  const halves = host.split('::');
+  if (halves.length > 2) return null;
+  const head = parseIpv6Groups(halves[0]);
+  const tail = halves.length === 2 ? parseIpv6Groups(halves[1]) : [];
+  if (!head || !tail) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0) return null;
+  return [...head, ...new Array(missing).fill(0), ...tail];
+}
+
+/**
+ * Classifies an IPv6 address. Besides the reserved ranges it resolves the
+ * forms that carry an IPv4 address inside IPv6, because those are the way to
+ * smuggle a loopback or private target past a naive prefix check.
+ */
+function isPrivateIpv6(host) {
+  const groups = expandIpv6(host);
+  // An address we cannot parse is not one we may reach.
+  if (!groups) return true;
+
+  const isZero = groups.every((group) => group === 0);
+  if (isZero) return true;
+  if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return true;
+
+  const embeddedIpv4 = (high, low) => `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+  const zeroPrefix = groups.slice(0, 5).every((group) => group === 0);
+  if (zeroPrefix && groups[5] === 0xffff) {
+    // IPv4-mapped: ::ffff:127.0.0.1
+    return isPrivateHost(embeddedIpv4(groups[6], groups[7]));
+  }
+  if (groups.slice(0, 6).every((group) => group === 0) && (groups[6] !== 0 || groups[7] !== 0)) {
+    // IPv4-compatible: ::127.0.0.1
+    return isPrivateHost(embeddedIpv4(groups[6], groups[7]));
+  }
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every((group) => group === 0)) {
+    // NAT64: 64:ff9b::127.0.0.1
+    return isPrivateHost(embeddedIpv4(groups[6], groups[7]));
+  }
+  if ((groups[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
+  if ((groups[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link local
+  if ((groups[0] & 0xff00) === 0xff00) return true; // ff00::/8 multicast
+  return false;
+}
+
 /**
  * Validates a target before the process makes a request to it. The page is
  * untrusted input to the Node process, so a typed URL must not turn this Mini
  * App into an open proxy.
+ *
+ * `allowPrivateNetwork` is only for the MCP endpoint the user configured
+ * themselves; every URL that comes back from a remote server is checked
+ * strictly, because a hostile server could otherwise point us at the network
+ * around this machine.
  */
-export function assertTargetUrl(url) {
+export function assertTargetUrl(url, options = {}) {
+  const { allowPrivateNetwork = false } = options;
   let parsed;
   try {
     parsed = new URL(url);
@@ -326,10 +459,17 @@ export function assertTargetUrl(url) {
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) {
     throw serviceError('target_url_invalid');
   }
-  // Instance metadata and link-local endpoints are never MCP servers.
-  if (host === '169.254.169.254' || host.endsWith('.internal') || host.startsWith('169.254.')) {
-    throw serviceError('target_url_blocked');
+  if (isPrivateHost(host)) {
+    // A private address is acceptable only when the user pointed us at it.
+    if (!allowPrivateNetwork) throw serviceError('target_url_blocked');
   }
+  return parsed;
+}
+
+/** Strict check for every URL that a remote server handed us. */
+export function assertMetadataUrl(url) {
+  const parsed = assertTargetUrl(url, { allowPrivateNetwork: false });
+  if (parsed.protocol !== 'https:') throw serviceError('target_url_invalid');
   return parsed;
 }
 
@@ -343,6 +483,9 @@ export function assertTargetUrl(url) {
  */
 export async function discoverAuthorization(url, options = {}) {
   const transport = options.transport === 'sse' ? 'sse' : 'streamable-http';
+  // The endpoint itself is the one the user configured, so a private address
+  // is allowed only when they opted into that.
+  assertTargetUrl(url, { allowPrivateNetwork: options.allowPrivateNetwork === true });
   const probe = await httpJson(url, probeRequest(url, { transport }), PROBE_TIMEOUT_MS, 3, transport === 'sse');
   if (probe.status !== 401) {
     // Only a 2xx proves the endpoint accepted an unauthenticated handshake.
@@ -374,7 +517,7 @@ export async function discoverAuthorization(url, options = {}) {
       reason: bearer ? 'bearer_without_resource_metadata' : 'credential_required_unknown_scheme',
     };
   }
-  const resourceDoc = await httpJson(resourceMatch[1], { headers: { accept: 'application/json' } });
+  const resourceDoc = await httpJson(assertMetadataUrl(resourceMatch[1]).toString(), { headers: { accept: 'application/json' } });
   const issuers = Array.isArray(resourceDoc.json?.authorization_servers) ? resourceDoc.json.authorization_servers : [];
   const metadata = await loadAuthorizationServerMetadata(issuers);
   return {
@@ -393,6 +536,9 @@ async function loadAuthorizationServerMetadata(issuers) {
     const base = String(issuer).replace(/\/+$/, '');
     for (const candidate of [`${base}/.well-known/oauth-authorization-server`, `${base}/.well-known/openid-configuration`]) {
       try {
+        // Every URL a remote server handed us is checked strictly: a hostile
+        // server must not be able to point us at the network around this host.
+        assertMetadataUrl(candidate);
         const response = await httpJson(candidate, { headers: { accept: 'application/json' } });
         if (response.ok && response.json?.token_endpoint) return response.json;
       } catch {
@@ -415,6 +561,7 @@ function pickAuthMethod(metadata) {
 async function registerClient(metadata, { redirectUri, scope, grantTypes }) {
   const endpoint = metadata?.registration_endpoint;
   if (!endpoint) throw serviceError('dynamic_registration_unsupported');
+  assertMetadataUrl(endpoint);
   const supported = Array.isArray(metadata.grant_types_supported) ? metadata.grant_types_supported : [];
   const requested = grantTypes ?? (() => {
     const list = ['authorization_code'];
@@ -467,6 +614,7 @@ function tokenRequestBody({ grantType, code, codeVerifier, redirectUri, refreshT
 }
 
 async function requestToken(metadata, client, form) {
+  assertMetadataUrl(metadata.token_endpoint);
   const headers = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' };
   if (client.client_secret && client.auth_method === 'client_secret_basic') {
     headers.authorization = `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString('base64')}`;
@@ -502,13 +650,54 @@ export async function probeMcpEndpoint(url, token, transport) {
 /* ------------------------------------------------------------------ */
 
 export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
-  const mcpConfigPath = resolveMcpConfigPath(dataDir);
   // Durable state belongs in the Host-owned dataDir. A credential directory
   // left next to mcp.json by an earlier version is read once and imported;
   // it is never written to again.
   const credentialDir = join(dataDir, 'mcp-credentials');
-  const legacyCredentialDir = join(dirname(mcpConfigPath), 'mcp-credentials');
+  const settingsPath = join(dataDir, 'settings.json');
   const backupPath = join(dataDir, 'mcp.json.bak');
+  const appliedBackupPath = join(dataDir, 'mcp.json.applied.bak');
+
+  // The configuration file is resolved once, symlinks resolved, and the page
+  // shows the exact path that a write would touch.
+  let configPathPromise = null;
+  const getConfigPath = async () => {
+    if (!configPathPromise) {
+      configPathPromise = canonicalConfigPath(resolveMcpConfigPath(dataDir));
+    }
+    return configPathPromise;
+  };
+
+  let legacyCredentialDir = null;
+  const getLegacyCredentialDir = async () => {
+    if (!legacyCredentialDir) {
+      legacyCredentialDir = join(dirname(await getConfigPath()), 'mcp-credentials');
+    }
+    return legacyCredentialDir;
+  };
+
+  const settings = { autoRefresh: false, allowPrivateNetwork: false };
+  let settingsLoaded = false;
+  const loadSettings = async () => {
+    if (settingsLoaded) return settings;
+    settingsLoaded = true;
+    try {
+      const parsed = JSON.parse(await readFile(settingsPath, 'utf8'));
+      if (typeof parsed.autoRefresh === 'boolean') settings.autoRefresh = parsed.autoRefresh;
+      if (typeof parsed.allowPrivateNetwork === 'boolean') settings.allowPrivateNetwork = parsed.allowPrivateNetwork;
+    } catch {
+      // No settings file yet: the defaults apply.
+    }
+    return settings;
+  };
+  const saveSettings = async (patch) => {
+    await loadSettings();
+    for (const [key, value] of Object.entries(patch)) {
+      if (typeof value === 'boolean') settings[key] = value;
+    }
+    await writeJsonFile(settingsPath, settings);
+    return settings;
+  };
 
   /** sessionId -> pending authorization state (server side only) */
   const pending = new Map();
@@ -541,7 +730,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   async function listConfiguredServers() {
     let parsed;
     try {
-      parsed = await readConfigFile(mcpConfigPath);
+      parsed = await readConfigFile(await getConfigPath());
     } catch (error) {
       return { servers: [], error: error instanceof Error ? error.message : 'config_unreadable' };
     }
@@ -567,7 +756,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   }
 
   async function loadCredential(serverName) {
-    const own = join(credentialDir, `${serverName}.json`);
+    const own = credentialPath(serverName, credentialDir);
     if (existsSync(own)) {
       try {
         return JSON.parse(await readFile(own, 'utf8'));
@@ -577,7 +766,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     }
     // One-time import from the legacy directory: read-only, and the copy that
     // lands in dataDir becomes the only copy this app maintains.
-    const legacy = join(legacyCredentialDir, `${serverName}.json`);
+    const legacy = credentialPath(serverName, await getLegacyCredentialDir());
     if (!existsSync(legacy)) return null;
     try {
       const data = JSON.parse(await readFile(legacy, 'utf8'));
@@ -590,7 +779,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   }
 
   async function saveCredential(serverName, data) {
-    const path = join(credentialDir, `${serverName}.json`);
+    const path = credentialPath(serverName, credentialDir);
     await writeJsonFile(path, data);
     return path;
   }
@@ -598,8 +787,9 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   async function probeDiscovery(serverName, url, transport) {
     const cached = discoveryCache.get(serverName);
     if (cached && Date.now() - cached.at < cached.ttlMs) return cached.value;
+    const { allowPrivateNetwork } = await loadSettings();
     try {
-      const value = await discoverAuthorization(url, { transport });
+      const value = await discoverAuthorization(url, { transport, allowPrivateNetwork });
       discoveryCache.set(serverName, { at: Date.now(), ttlMs: DISCOVERY_TTL_MS, value });
       return value;
     } catch (error) {
@@ -686,6 +876,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
         warnings,
         pendingGrant: Boolean(grant),
         pendingFingerprint: grant ? fingerprint(grant.token.access_token) : null,
+        pendingConfirmToken: grant?.confirmToken ?? null,
         lastError: grant?.error ?? null,
       });
     }
@@ -693,6 +884,8 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     return {
       now,
       configError,
+      configPath: await getConfigPath(),
+      settings: await loadSettings(),
       servers: items,
       summary: {
         total: items.length,
@@ -703,17 +896,31 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     };
   }
 
-  function openInBrowser(url) {
+  /**
+   * Opens a URL in the default browser. The platform helper differs, and on
+   * Linux `open` does not exist at all, so a failed spawn is reported instead
+   * of being swallowed - the page then tells the user to copy the link.
+   */
+  async function openInBrowser(url) {
+    const command =
+      process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
     try {
       // Arguments are passed as an argv array and never through a shell.
-      const isWindows = process.platform === 'win32';
-      const child = isWindows
-        ? spawn('explorer.exe', [url], { stdio: 'ignore' })
-        : spawn('open', [url], { stdio: 'ignore' });
+      const child = spawn(command, [url], { stdio: 'ignore' });
       children.add(child);
       child.once('exit', () => children.delete(child));
+      const started = await new Promise((resolve) => {
+        let settled = false;
+        const done = (value) => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        child.once('spawn', () => done(true));
+        child.once('error', () => done(false));
+      });
       child.unref();
-      return true;
+      return started;
     } catch {
       return false;
     }
@@ -770,7 +977,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
       createdAt: Date.now(),
     });
 
-    const opened = openInBrowser(authorizationUrl);
+    const opened = await openInBrowser(authorizationUrl);
     log('info', `oauth.authorization_started server=${serverName} browser_opened=${opened}`);
     return {
       sessionId,
@@ -795,7 +1002,9 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
       if (error) throw serviceError(`authorization_denied_${error}`);
     }
     if (!code) throw serviceError('authorization_code_missing');
-    if (state && state !== session.state) throw serviceError('state_mismatch');
+    // The state must match exactly: a pasted URL without one is not a
+    // callback for this session.
+    if (state !== session.state) throw serviceError('state_mismatch');
 
     const form = tokenRequestBody({
       grantType: 'authorization_code',
@@ -816,6 +1025,9 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
       client: session.client,
       scope: session.scope,
       createdAt: Date.now(),
+      // A one-time token, so a write to the Host configuration always goes
+      // through the confirmation the page showed.
+      confirmToken: randomBytes(16).toString('hex'),
     };
     awaitingConfirmation.set(session.serverName, grant);
     log('info', `oauth.authorization_completed server=${session.serverName}`);
@@ -867,6 +1079,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
         client: session.client,
         scope: session.scope,
         createdAt: Date.now(),
+        confirmToken: randomBytes(16).toString('hex'),
       });
       log('info', `oauth.callback_received server=${session.serverName}`);
       return { ok: true, serverName: session.serverName, message: '授权成功，请回到 Mini App 确认写入配置。' };
@@ -879,9 +1092,13 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   }
 
   /** Commits a pending grant: credential file first, then the mcp.json patch. */
-  async function applyGrant(serverName) {
+  async function applyGrant(serverName, options = {}) {
+    const { confirmToken = null, expectedPath = null } = options;
     const grant = awaitingConfirmation.get(serverName);
     if (!grant) throw serviceError('no_pending_grant');
+    // A write to the Host configuration only happens through the confirmation
+    // the page showed, so the page has to present the one-time token.
+    if (!confirmToken || confirmToken !== grant.confirmToken) throw serviceError('confirm_required');
     const token = grant.token;
     const expiresAt = readTokenExpiry(token.access_token);
     const credential = {
@@ -898,7 +1115,11 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
       note: 'Managed by MCP OAuth Console',
     };
     await saveCredential(serverName, credential);
-    const patch = await patchMcpAuthorization(serverName, token.access_token, { url: grant.url });
+    const patch = await patchMcpAuthorization(serverName, token.access_token, {
+      url: grant.url,
+      confirmed: true,
+      expectedPath,
+    });
     awaitingConfirmation.delete(serverName);
     const { servers: configured } = await listConfiguredServers();
     const transport = configured.find((item) => item.name === serverName)?.type;
@@ -981,71 +1202,91 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   /**
    * Patches `mcpServers.<name>.headers.Authorization` in place, keeping the
    * rest of the file byte-identical. Creates the entry when it is missing.
+   *
+   * The whole read-modify-write runs under one lock and the file is re-read
+   * inside it, so a concurrent edit cannot lose entries. The path the write
+   * targets must match the one the user confirmed.
    */
-  async function patchMcpAuthorization(serverName, token, { url } = {}) {
+  async function patchMcpAuthorization(serverName, token, options = {}) {
+    const { url, confirmed = false, expectedPath = null } = options;
+    assertServerName(serverName);
     const bearer = `Bearer ${token}`;
-    const parsed = await readConfigFile(mcpConfigPath);
-    const existing = parsed.servers[serverName];
 
-    if (!existing) {
-      const next = { ...parsed.config };
-      next.mcpServers = {
-        ...parsed.servers,
-        [serverName]: {
+    return withWriteLock(async () => {
+      const configPath = await getConfigPath();
+      if (expectedPath && resolve(expectedPath) !== resolve(configPath)) {
+        throw serviceError('config_path_changed');
+      }
+      const parsed = await readConfigFile(configPath);
+      const rootSpan = findRootObjectSpan(parsed.text);
+      if (!rootSpan) throw serviceError('server_entry_not_locatable');
+      const serversSpan = findMemberObjectSpan(parsed.text, 'mcpServers', rootSpan.start, rootSpan.end);
+      if (!serversSpan) throw serviceError('server_entry_not_locatable');
+      const existing = parsed.servers[serverName];
+
+      let nextText;
+      let replaced = false;
+      let created = false;
+      let previous = '';
+
+      if (!existing) {
+        // Insert the entry textually, so the rest of the file stays
+        // byte-identical instead of being re-serialized.
+        const entry = `${JSON.stringify(serverName)}: ${JSON.stringify({
           type: 'streamable-http',
           enabled: true,
           configured: true,
           builtin: false,
           url: url ?? '',
           headers: { Authorization: bearer },
-        },
-      };
-      return withWriteLock(async () => {
-        await backupConfig(mcpConfigPath, backupPath);
-        await writeJsonFile(mcpConfigPath, next);
-        return { created: true, replaced: false, previousFingerprint: null };
-      });
-    }
-    const headers = existing.headers && typeof existing.headers === 'object' ? existing.headers : null;
-    const previous = headers && typeof headers.Authorization === 'string' ? headers.Authorization : '';
-    const span = findMemberObjectSpan(parsed.text, serverName);
-    if (!span) throw serviceError('server_entry_not_locatable');
-
-    let nextText;
-    let replaced = false;
-    const authSpan = findMemberStringSpan(parsed.text, 'Authorization', span.start, span.end);
-    if (authSpan) {
-      // Replace the existing Authorization value in place.
-      nextText = `${parsed.text.slice(0, authSpan.start)}${JSON.stringify(bearer)}${parsed.text.slice(authSpan.end)}`;
-      replaced = true;
-    } else {
-      // The entry carries no Authorization header yet - it may authenticate with
-      // x-api-key, or not at all. Add the header instead of refusing the write
-      // after the user already completed the browser authorization.
-      const headersSpan = headers ? findMemberObjectSpan(parsed.text, 'headers', span.start, span.end) : null;
-      if (headersSpan) {
-        const insertAt = headersSpan.start + 1;
-        nextText = `${parsed.text.slice(0, insertAt)}${JSON.stringify('Authorization')}: ${JSON.stringify(bearer)}, ${parsed.text.slice(insertAt)}`;
+        })}`;
+        const insertAt = serversSpan.end - 1;
+        const head = parsed.text.slice(0, insertAt).trimEnd();
+        const tail = parsed.text.slice(insertAt);
+        const separator = head.endsWith('{') ? '' : ',';
+        nextText = `${head}${separator}\n    ${entry}\n  ${tail}`;
+        created = true;
       } else {
-        const insertAt = span.start + 1;
-        nextText = `${parsed.text.slice(0, insertAt)}${JSON.stringify('headers')}: { ${JSON.stringify('Authorization')}: ${JSON.stringify(bearer)} }, ${parsed.text.slice(insertAt)}`;
+        const span = findMemberObjectSpan(parsed.text, serverName, serversSpan.start, serversSpan.end);
+        if (!span) throw serviceError('server_entry_not_locatable');
+        const headers = existing.headers && typeof existing.headers === 'object' ? existing.headers : null;
+        previous = headers && typeof headers.Authorization === 'string' ? headers.Authorization : '';
+        const authSpan = findMemberStringSpan(parsed.text, 'Authorization', span.start, span.end);
+        if (authSpan) {
+          // Replace the existing Authorization value in place.
+          nextText = `${parsed.text.slice(0, authSpan.start)}${JSON.stringify(bearer)}${parsed.text.slice(authSpan.end)}`;
+          replaced = true;
+        } else {
+          // The entry carries no Authorization header yet - it may authenticate
+          // with x-api-key, or not at all. Add the header instead of refusing
+          // the write after the user already completed the authorization.
+          const headersSpan = headers ? findMemberObjectSpan(parsed.text, 'headers', span.start, span.end) : null;
+          if (headersSpan) {
+            const insertAt = headersSpan.start + 1;
+            nextText = `${parsed.text.slice(0, insertAt)}${JSON.stringify('Authorization')}: ${JSON.stringify(bearer)}, ${parsed.text.slice(insertAt)}`;
+          } else {
+            const insertAt = span.start + 1;
+            nextText = `${parsed.text.slice(0, insertAt)}${JSON.stringify('headers')}: { ${JSON.stringify('Authorization')}: ${JSON.stringify(bearer)} }, ${parsed.text.slice(insertAt)}`;
+          }
+        }
       }
-    }
 
-    let verified;
-    try {
-      verified = JSON.parse(nextText);
-    } catch {
-      throw serviceError('patched_config_invalid');
-    }
-    if (verified?.mcpServers?.[serverName]?.headers?.Authorization !== bearer) {
-      throw serviceError('patch_verification_failed');
-    }
-    return withWriteLock(async () => {
-      await backupConfig(mcpConfigPath, backupPath);
-      await writeFileAtomic(mcpConfigPath, nextText);
+      let verified;
+      try {
+        verified = JSON.parse(nextText);
+      } catch {
+        throw serviceError('patched_config_invalid');
+      }
+      if (verified?.mcpServers?.[serverName]?.headers?.Authorization !== bearer) {
+        throw serviceError('patch_verification_failed');
+      }
+      // The backup is the only way back, so a failed backup aborts the write.
+      // A confirmed apply keeps its own copy, so a background refresh cannot
+      // replace the state the user was shown.
+      await backupConfig(configPath, confirmed ? appliedBackupPath : backupPath);
+      await writeFileAtomic(configPath, nextText);
       return {
-        created: false,
+        created,
         replaced,
         previousFingerprint: previous ? fingerprint(previous.replace(/^\S+\s+/, '')) : null,
       };
@@ -1053,7 +1294,11 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   }
 
   /** Refreshes every server whose token is inside the refresh window. */
-  async function refreshExpiring() {
+  async function refreshExpiring({ force = false } = {}) {
+    const { autoRefresh } = await loadSettings();
+    if (!autoRefresh && !force) {
+      return [];
+    }
     const { servers } = await listConfiguredServers();
     const results = [];
     for (const server of servers) {
@@ -1114,7 +1359,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
     if (client.client_secret && authMethod === 'client_secret_basic') {
       deviceHeaders.authorization = `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString('base64')}`;
     }
-    const response = await httpJson(metadata.device_authorization_endpoint, {
+    const response = await httpJson(assertMetadataUrl(metadata.device_authorization_endpoint).toString(), {
       method: 'POST',
       headers: deviceHeaders,
       body: form.toString(),
@@ -1200,6 +1445,7 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
           client: session.client,
           scope: session.scope,
           createdAt: Date.now(),
+          confirmToken: randomBytes(16).toString('hex'),
         });
         log('info', `oauth.device_authorized server=${session.serverName}`);
         onChange?.();
@@ -1257,7 +1503,9 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
   }
 
   return {
-    mcpConfigPath,
+    getConfigPath,
+    loadSettings,
+    saveSettings,
     credentialDir,
     listConfiguredServers,
     buildState,
