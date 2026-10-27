@@ -26,6 +26,7 @@ const ERROR_CATALOG = {
   target_url_contains_credentials: { status: 400, message: 'MCP 地址里不能带用户名或密码' },
   target_url_blocked: { status: 400, message: '该地址属于实例元数据或链路本地网段，已拒绝访问' },
   redirect_invalid: { status: 400, message: '服务端返回的重定向地址无法解析，已停止请求' },
+  redirect_not_allowed: { status: 502, message: '该接口返回了重定向，出于安全考虑已停止请求' },
   too_many_redirects: { status: 502, message: '重定向次数过多，已停止请求' },
   config_not_parseable: { status: 500, message: 'mcp.json 的内容无法解析，已放弃写入' },
   invalid_server_name: { status: 400, message: '服务器名称含有非法字符（只允许字母、数字、点、下划线和连字符）' },

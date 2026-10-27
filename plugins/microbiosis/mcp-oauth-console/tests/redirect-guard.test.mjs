@@ -1,5 +1,6 @@
-// A redirect must not be a way around the URL guard. `fetch` follows a
-// redirect on its own, so every hop is checked again before it is requested.
+// A redirect must not be a way around the URL guard, and it must not carry a
+// credential to a host that did not receive it. `fetch` follows a redirect on
+// its own, so every hop is checked again before it is requested.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
@@ -10,6 +11,28 @@ import {
   guardedRequest,
   resolveRedirectTarget,
 } from '../miniapp/node/oauth-service.mjs';
+
+/**
+ * Runs the guarded request and returns the error the guard raised.
+ *
+ * A port that was taken between the bind and the connect shows up as a
+ * connection error, which is not what this test is about, so it is retried
+ * instead of being reported as a failure of the guard.
+ */
+async function requestUntilRefused(url, guard) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await guardedRequest(url, {}, { guard });
+      return null;
+    } catch (error) {
+      lastError = error;
+      if (error instanceof Error && /blocked|target_url/.test(error.message)) return error;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+  }
+  throw lastError;
+}
 
 test('a redirect to a private address is refused', () => {
   const hops = [
@@ -40,28 +63,6 @@ test('a relative redirect stays on the same host', () => {
     'https://example.com/other',
   );
 });
-
-/**
- * Runs the guarded request and returns the error the guard raised.
- *
- * A port that was taken between the bind and the connect shows up as a
- * connection error, which is not what this test is about, so it is retried
- * instead of being reported as a failure of the guard.
- */
-async function requestUntilRefused(url, guard) {
-  let lastError = null;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      await guardedRequest(url, {}, guard);
-      return null;
-    } catch (error) {
-      lastError = error;
-      if (error instanceof Error && /blocked|target_url/.test(error.message)) return error;
-      await new Promise((resolve) => setTimeout(resolve, 60));
-    }
-  }
-  throw lastError;
-}
 
 test('the redirected host is never requested when the guard refuses the hop', async () => {
   let hits = 0;
@@ -113,6 +114,82 @@ test('the endpoint guard refuses a private hop even when the first URL is allowe
     assert.match(error.message, /target_url/);
   } finally {
     redirector.closeAllConnections?.();
+    await new Promise((resolve) => redirector.close(resolve));
+  }
+});
+
+test('a cross-origin redirect does not carry the Authorization header', async () => {
+  let seen = null;
+  const other = createServer((request, response) => {
+    seen = { authorization: request.headers.authorization ?? null, cookie: request.headers.cookie ?? null };
+    response.writeHead(200).end('ok');
+  });
+  await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+  const otherPort = other.address().port;
+
+  const redirector = createServer((_request, response) => {
+    response.writeHead(302, { location: `http://127.0.0.1:${otherPort}/target` }).end();
+  });
+  await new Promise((resolve) => redirector.listen(0, '127.0.0.1', resolve));
+  const redirectorPort = redirector.address().port;
+
+  try {
+    const first = `http://127.0.0.1:${redirectorPort}/`;
+    await guardedRequest(
+      first,
+      {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret-token', cookie: 'session=abc', 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }),
+      },
+      { guard: (url) => { if (url !== first && !url.includes(`:${otherPort}`)) throw new Error('blocked'); } },
+    );
+    assert.ok(seen, 'the redirect target must have been reached');
+    assert.equal(seen.authorization, null, 'the token must not travel to another origin');
+    assert.equal(seen.cookie, null, 'the cookie must not travel to another origin');
+  } finally {
+    other.closeAllConnections?.();
+    redirector.closeAllConnections?.();
+    await new Promise((resolve) => other.close(resolve));
+    await new Promise((resolve) => redirector.close(resolve));
+  }
+});
+
+test('a request whose body holds a secret is never redirected', async () => {
+  let hits = 0;
+  const other = createServer((request, response) => {
+    hits += 1;
+    response.writeHead(200).end(JSON.stringify({ leaked: request.body ?? null }));
+  });
+  await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+  const otherPort = other.address().port;
+
+  const redirector = createServer((_request, response) => {
+    response.writeHead(302, { location: `http://127.0.0.1:${otherPort}/token` }).end();
+  });
+  await new Promise((resolve) => redirector.listen(0, '127.0.0.1', resolve));
+  const redirectorPort = redirector.address().port;
+
+  try {
+    const first = `http://127.0.0.1:${redirectorPort}/token`;
+    await assert.rejects(
+      () =>
+        guardedRequest(
+          first,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: 'grant_type=refresh_token&refresh_token=the-secret',
+          },
+          { guard: () => {}, sensitive: true },
+        ),
+      /redirect_not_allowed/,
+    );
+    assert.equal(hits, 0, 'the body must never be re-sent to the redirect target');
+  } finally {
+    other.closeAllConnections?.();
+    redirector.closeAllConnections?.();
+    await new Promise((resolve) => other.close(resolve));
     await new Promise((resolve) => redirector.close(resolve));
   }
 });

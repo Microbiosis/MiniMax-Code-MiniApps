@@ -22,6 +22,8 @@ import { serviceError } from './errors.mjs';
 
 const CLIENT_NAME = 'MCP OAuth Console';
 const CALLBACK_PATH = '/oauth/callback';
+/** The name of the Host's data directory. The search for `mcp.json` stops there. */
+const MINIMAX_DIR_NAME = '.minimax';
 const REFRESH_WINDOW_MS = 30 * 60 * 1000;
 /** How long a successful detection stays valid, and how long a failed one is
  *  remembered before a retry is allowed (a flaky network must not pin a wrong
@@ -161,19 +163,26 @@ function findMemberStringSpan(text, key, from, to) {
  * The process working directory and the Node executable's directory are
  * deliberately not searched, so an unrelated `mcp.json` there can never win.
  *
+ * The search stops at the MiniMax data directory: the Host's configuration
+ * lives there, and an `mcp.json` one level above it belongs to something
+ * else. The user's home directory is the outer bound for the same reason.
+ *
  * The result is a candidate only. Before anything is written it is realpath'ed
  * and shown in the page, and the write is bound to that exact path.
  */
 export function resolveMcpConfigPath(dataDir) {
+  const home = homedir();
   let dir = resolve(dataDir);
   for (let depth = 0; depth < 10; depth += 1) {
     const candidate = join(dir, 'mcp.json');
     if (existsSync(candidate)) return candidate;
+    // The MiniMax data directory is the boundary of the search.
+    if (basename(dir) === MINIMAX_DIR_NAME) break;
     const parent = dirname(dir);
-    if (parent === dir) break;
+    if (parent === dir || parent === home) break;
     dir = parent;
   }
-  return join(homedir(), '.minimax', 'mcp.json');
+  return join(home, MINIMAX_DIR_NAME, 'mcp.json');
 }
 
 /** The canonical path of the configuration file, with symlinks resolved. */
@@ -276,18 +285,39 @@ export function resolveRedirectTarget(current, location, guard) {
 }
 
 /**
+ * Headers that must never travel to a host that did not receive them.
+ */
+const CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
+
+/** Returns the header set without the credential headers. */
+function withoutCredentialHeaders(headers) {
+  const out = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!CREDENTIAL_HEADERS.includes(name.toLowerCase())) out[name] = value;
+  }
+  return out;
+}
+
+/**
  * Follows a redirect by hand and checks every hop again.
  *
  * `fetch` follows a redirect on its own, which would let a hostile server
  * answer with a `302` pointing at the network around this machine and walk
  * right past the URL guard. Each hop is therefore validated with the same
  * rule as the first URL.
+ *
+ * A redirect must also not carry the credential to a host that did not
+ * receive it: `fetch` drops the `Authorization` header on a cross-origin
+ * redirect, and the manual loop has to do the same. A request whose *body*
+ * holds a secret - a token request, a client registration, a device code -
+ * is not followed at all: those endpoints are not expected to redirect.
  */
-async function fetchGuarded(url, init, signal, guard) {
+async function fetchGuarded(url, init, signal, guard, sensitive = false) {
   if (guard) guard(url);
   let current = url;
+  let currentInit = { ...init, redirect: 'manual' };
   for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop += 1) {
-    const response = await fetch(current, { ...init, redirect: 'manual', signal });
+    const response = await fetch(current, { ...currentInit, signal });
     if (response.status < 300 || response.status >= 400) return response;
     const location = response.headers.get('location');
     try {
@@ -296,8 +326,22 @@ async function fetchGuarded(url, init, signal, guard) {
       // the body was already closed
     }
     if (!location) return response;
+    if (sensitive) throw serviceError('redirect_not_allowed');
     if (hop === MAX_REDIRECT_HOPS) throw serviceError('too_many_redirects');
-    current = resolveRedirectTarget(current, location, guard);
+    const next = resolveRedirectTarget(current, location, guard);
+    // A redirect to another origin must not carry the credential along.
+    if (currentInit.headers && new URL(next).origin !== new URL(current).origin) {
+      currentInit = { ...currentInit, headers: withoutCredentialHeaders(currentInit.headers) };
+    }
+    // 301, 302 and 303 turn a POST into a GET without a body, like a browser.
+    if (
+      String(currentInit.method ?? 'GET').toUpperCase() === 'POST' &&
+      (response.status === 301 || response.status === 302 || response.status === 303)
+    ) {
+      currentInit = { ...currentInit, method: 'GET' };
+      delete currentInit.body;
+    }
+    current = next;
   }
   throw serviceError('too_many_redirects');
 }
@@ -308,15 +352,23 @@ async function fetchGuarded(url, init, signal, guard) {
  * retried instead of being reported as an empty or failed probe.
  *
  * `guard` is called for the first URL and for every redirect hop, so no
- * request can leave the network the caller allowed.
+ * request can leave the network the caller allowed. `sensitive` marks a
+ * request whose body holds a credential: it is never redirected.
  */
-async function httpJson(url, init, timeoutMs = PROBE_TIMEOUT_MS, attempts = 3, headersOnly = false, guard = null) {
+async function httpJson(url, init, options = {}) {
+  const {
+    timeoutMs = PROBE_TIMEOUT_MS,
+    attempts = 3,
+    headersOnly = false,
+    guard = null,
+    sensitive = false,
+  } = options;
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetchGuarded(url, init, controller.signal, guard);
+      const response = await fetchGuarded(url, init, controller.signal, guard, sensitive);
       if (headersOnly) {
         // The body of an SSE stream never ends, so it must not be read.
         try {
@@ -348,8 +400,8 @@ async function httpJson(url, init, timeoutMs = PROBE_TIMEOUT_MS, attempts = 3, h
  * Exported for the package tests: one request that checks the first URL and
  * every redirect hop with the given guard.
  */
-export async function guardedRequest(url, init, guard) {
-  return httpJson(url, init, PROBE_TIMEOUT_MS, 1, false, guard);
+export async function guardedRequest(url, init, options = {}) {
+  return httpJson(url, init, { attempts: 1, ...options });
 }
 
 /**
@@ -554,10 +606,7 @@ export async function discoverAuthorization(url, options = {}) {
   const probe = await httpJson(
     url,
     probeRequest(url, { transport }),
-    PROBE_TIMEOUT_MS,
-    3,
-    transport === 'sse',
-    endpointHop(options.allowPrivateNetwork === true),
+    { timeoutMs: PROBE_TIMEOUT_MS, attempts: 3, headersOnly: transport === 'sse', guard: endpointHop(options.allowPrivateNetwork === true) },
   );
   if (probe.status !== 401) {
     // Only a 2xx proves the endpoint accepted an unauthenticated handshake.
@@ -592,10 +641,7 @@ export async function discoverAuthorization(url, options = {}) {
   const resourceDoc = await httpJson(
     assertMetadataUrl(resourceMatch[1]).toString(),
     { headers: { accept: 'application/json' } },
-    PROBE_TIMEOUT_MS,
-    3,
-    false,
-    strictHop,
+    { guard: strictHop },
   );
   const issuers = Array.isArray(resourceDoc.json?.authorization_servers) ? resourceDoc.json.authorization_servers : [];
   const metadata = await loadAuthorizationServerMetadata(issuers);
@@ -621,10 +667,7 @@ async function loadAuthorizationServerMetadata(issuers) {
         const response = await httpJson(
           candidate,
           { headers: { accept: 'application/json' } },
-          PROBE_TIMEOUT_MS,
-          3,
-          false,
-          strictHop,
+          { guard: strictHop },
         );
         if (response.ok && response.json?.token_endpoint) return response.json;
       } catch {
@@ -669,10 +712,8 @@ async function registerClient(metadata, { redirectUri, scope, grantTypes }) {
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify(body),
     },
-    PROBE_TIMEOUT_MS,
-    3,
-    false,
-    strictHop,
+    // The body carries the client secret, so this request is never redirected.
+    { guard: strictHop, sensitive: true },
   );
   if (!response.ok || !response.json?.client_id) {
     throw serviceError(`dynamic_registration_failed_${response.status}`);
@@ -723,10 +764,8 @@ async function requestToken(metadata, client, form) {
       headers,
       body: form.toString(),
     },
-    PROBE_TIMEOUT_MS,
-    3,
-    false,
-    strictHop,
+    // The body carries the refresh token, the client secret or the code.
+    { guard: strictHop, sensitive: true },
   );
   if (!response.ok || !response.json?.access_token) {
     const code = response.json?.error || `http_${response.status}`;
@@ -745,10 +784,7 @@ export async function probeMcpEndpoint(url, token, transport, options = {}) {
     const response = await httpJson(
       url,
       probeRequest(url, { transport, token }),
-      PROBE_TIMEOUT_MS,
-      3,
-      isSse,
-      endpointHop(options.allowPrivateNetwork === true),
+      { timeoutMs: PROBE_TIMEOUT_MS, attempts: 3, headersOnly: isSse, guard: endpointHop(options.allowPrivateNetwork === true) },
     );
     return { status: response.status, ok: response.status === 200 || response.status === 204 };
   } catch (error) {
@@ -1484,10 +1520,8 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
         headers: deviceHeaders,
         body: form.toString(),
       },
-      PROBE_TIMEOUT_MS,
-      3,
-      false,
-      strictHop,
+      // The body carries the client secret.
+      { guard: strictHop, sensitive: true },
     );
     if (!response.ok || !response.json?.device_code) {
       log('warn', `oauth.device_request_failed server=${serverName} status=${response.status} body=${String(response.text).slice(0, 200)}`);
@@ -1561,10 +1595,8 @@ export function createOAuthService({ dataDir, baseUrl, logger, onChange }) {
       const response = await httpJson(
         session.metadata.token_endpoint,
         { method: 'POST', headers, body: form.toString() },
-        PROBE_TIMEOUT_MS,
-        3,
-        false,
-        strictHop,
+        // The body carries the client secret.
+        { guard: strictHop, sensitive: true },
       );
       body = response.json ?? {};
       if (response.ok && body.access_token) {

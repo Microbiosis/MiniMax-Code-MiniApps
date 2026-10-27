@@ -79,7 +79,7 @@ When a server does not declare OAuth the browser flow is not offered: there is n
 1. the Host's own data-dir chain — it walks up from `context.dataDir` (the plugin's data directory lives inside the MiniMax data directory) and takes the first `mcp.json` it finds;
 2. the documented default location, `~/.minimax/mcp.json`.
 
-The process working directory and the Node executable's directory are deliberately **not** searched, so an unrelated `mcp.json` next to them can never win. The layout is still unspecified: on a Host that keeps the configuration somewhere else, the plugin finds no servers and shows an empty list.
+The process working directory and the Node executable's directory are deliberately **not** searched, so an unrelated `mcp.json` next to them can never win. The walk **stops at the MiniMax data directory** and never reaches the home directory, so a stray `mcp.json` there is not picked up either. The layout is still unspecified: on a Host that keeps the configuration somewhere else, the plugin finds no servers and shows an empty list.
 
 A credential directory left next to `mcp.json` by an earlier version of this plugin is read once and imported into `context.dataDir`. It is never written to again.
 
@@ -114,6 +114,12 @@ Every URL is validated before the process requests it:
 - IPv4-mapped, IPv4-compatible and NAT64 IPv6 forms are resolved back to their IPv4 address first, so `::ffff:127.0.0.1` and `::ffff:7f00:1` are refused as well.
 
 Redirects are followed by hand, and **every hop is checked again with the same rule** — a `302` must not be a way around the guard. At most five hops are followed.
+
+A redirect also must not hand the credential to a host that did not receive it:
+
+- a redirect to another origin is followed **without** the `Authorization` header and without cookies, the way `fetch` itself drops them;
+- a `301`, `302` or `303` turns the `POST` into a `GET` without a body, the way a browser does;
+- a request whose body holds a secret — a token request, a client registration, a device code — is **never redirected**. Those endpoints are not expected to redirect, so the request is refused instead.
 
 Two tiers exist. A URL that a **remote server** handed back — a metadata document, a token endpoint, a device endpoint — is always checked strictly and can never reach a private address. A URL the **user** configured as their own MCP endpoint may point at a private address, but only when the "Allow private addresses" switch is on.
 
